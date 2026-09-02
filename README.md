@@ -108,7 +108,17 @@ sudo systemctl enable --now hindsight-api.service
 sudo systemctl status hindsight-api.service
 ```
 
-该服务只绑定 `127.0.0.1:8888`，MCP 关闭，API 进程数固定为 1，并使用 Hindsight 默认的内置后台 worker；这个单实例原型不需要另起 `hindsight-worker` 服务。
+单用户 VPS 也可以使用仓库内的用户级 unit；开启 linger 后无需保持登录，且不需要以 root 运行 Hindsight：
+
+```bash
+mkdir -p ~/.config/systemd/user
+install -m 0644 deploy/hindsight-api-user.service ~/.config/systemd/user/hindsight-api.service
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable --now hindsight-api.service
+```
+
+该服务只绑定 `127.0.0.1:8888`，MCP 关闭，API 进程数固定为 1，并使用 Hindsight 默认的内置后台 worker；这个单实例原型不需要另起 `hindsight-worker` 服务。Ubuntu 24.04 自带的 pgvector 0.6 尚不支持 iterative scan，因此配置显式关闭该优化；升级到 pgvector 0.8 或更新版本后可重新启用。
 
 验证真实 Pi 的高价值候选筛选，不连接 Hindsight：
 

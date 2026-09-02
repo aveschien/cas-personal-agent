@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -23,7 +24,7 @@ export async function runMemorySmoke(): Promise<void> {
   const baseUrl = required("HINDSIGHT_BASE_URL");
   const productionBank = required("HINDSIGHT_BANK_ID");
   const bankId = process.env.HINDSIGHT_SMOKE_BANK_ID ?? `${productionBank}-smoke`;
-  const sourceEventId = "dev-memory-smoke-001";
+  const sourceEventId = `dev-memory-smoke-${randomUUID()}`;
   const candidate = {
     key: "conclusion-first",
     category: "preference" as const,
