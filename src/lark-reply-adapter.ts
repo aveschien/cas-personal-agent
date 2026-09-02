@@ -69,7 +69,7 @@ export function createLarkReplyAdapter(
         "+messages-reply",
         "--message-id",
         request.messageId,
-        "--text",
+        "--markdown",
         request.text,
         "--idempotency-key",
         request.idempotencyKey,
