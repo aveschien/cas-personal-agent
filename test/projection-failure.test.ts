@@ -46,7 +46,7 @@ test("the raw Event remains durable when State projection fails", async () => {
       sourceMessageId: "message-projection-failure",
       userId: "user-1",
       rawText: "继续等张总反馈",
-      processingStatus: "failed",
+      processingStatus: "degraded",
       acknowledgement: null,
     });
   } finally {

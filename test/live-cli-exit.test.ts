@@ -8,7 +8,13 @@ test("the live CLI stops and fails when its event consumer exits", async () => {
   await assert.rejects(
     runLiveCli({
       cwd: "/srv/cas-personal-agent",
-      environment: { CAS_ALLOWED_USER_IDS: "ou_owner" },
+      environment: {
+        CAS_ALLOWED_USER_IDS: "ou_owner",
+        CAS_BITABLE_BASE_TOKEN: "bas_state",
+        CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+        CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+        CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+      },
       waitForShutdown: new Promise<void>(() => undefined),
       serviceFactory: async () => ({
         start: async () => {

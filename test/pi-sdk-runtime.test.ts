@@ -8,7 +8,7 @@ import {
   type PiSdkSessionFactoryInput,
 } from "../src/pi-sdk-runtime.js";
 
-test("the Pi SDK runtime exposes only the controlled state proposal tool", async () => {
+test("the Pi SDK runtime exposes only the controlled semantic operation tool", async () => {
   let factoryInput: PiSdkSessionFactoryInput | undefined;
   let listener: ((delta: string) => void) | undefined;
   let disposed = false;
@@ -31,7 +31,9 @@ test("the Pi SDK runtime exposes only the controlled state proposal tool", async
           },
           prompt: async (prompt) => {
             prompts.push(prompt);
-            input.proposeItem({
+            input.proposeOperation({
+              kind: "upsert_item",
+              itemKey: `item-${prompts.length}`,
               title: prompt,
               type: "task",
               status: "actionable",
@@ -50,14 +52,15 @@ test("the Pi SDK runtime exposes only the controlled state proposal tool", async
   const first = await runtime.runTurn("修改报价页");
   const second = await runtime.runTurn("继续刚才的事项");
 
-  assert.deepEqual(factoryInput?.enabledToolNames, ["state_propose_item"]);
+  assert.deepEqual(factoryInput?.enabledToolNames, ["state_apply_operation"]);
   assert.equal(factoryInput?.disableBuiltinTools, true);
   assert.match(factoryInput?.systemPrompt ?? "", /不得使用 shell/);
   assert.deepEqual(prompts, ["修改报价页", "继续刚才的事项"]);
   assert.deepEqual(first, {
     changes: [
       {
-        kind: "item",
+        kind: "upsert_item",
+        itemKey: "item-1",
         title: "修改报价页",
         type: "task",
         status: "actionable",

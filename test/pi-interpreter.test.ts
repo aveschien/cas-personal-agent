@@ -60,8 +60,25 @@ test("the Pi Interpreter preserves multi-turn state and records each completed t
       rawPayload: {},
     });
 
-    assert.deepEqual(prompts, ["记住报价项目", "刚才说的项目是什么"]);
-    assert.equal(second.acknowledgement, "已理解：刚才说的项目是什么");
+    assert.deepEqual(prompts, [
+      JSON.stringify({
+        trustedContext: {
+          receivedAt: "2026-09-02T18:10:00.000Z",
+          receivedLocalDateTime: "2026-09-02 11:10:00",
+          userTimeZone: "America/Los_Angeles",
+        },
+        userMessage: "记住报价项目",
+      }),
+      JSON.stringify({
+        trustedContext: {
+          receivedAt: "2026-09-02T18:11:00.000Z",
+          receivedLocalDateTime: "2026-09-02 11:11:00",
+          userTimeZone: "America/Los_Angeles",
+        },
+        userMessage: "刚才说的项目是什么",
+      }),
+    ]);
+    assert.equal(second.acknowledgement, `已理解：${prompts[1]}`);
     assert.equal(registry.getActive("cas-main")?.turnCount, 2);
   } finally {
     interpreter.dispose();

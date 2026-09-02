@@ -1,6 +1,6 @@
 # CAS Personal Agent
 
-单用户、私有部署的个人工作管理 Agent。开发入口提供确定性 NDJSON 闭环；真实入口通过受管的 `lark-cli` Event Channel 接收飞书私聊，由持久化 Pi SDK 会话解释消息，并用 `lark-cli` 回复。所有原始 Event 会先写入 SQLite。
+单用户、私有部署的个人工作管理 Agent。开发入口提供确定性 NDJSON 闭环；真实入口通过受管的 `lark-cli` Event Channel 接收飞书私聊，由持久化 Pi SDK 会话解释消息，并用 `lark-cli` 回复。所有原始 Event 会先写入 SQLite，再通过类型化语义操作投影到飞书多维表格。
 
 ## 本地运行
 
@@ -37,7 +37,7 @@ lark-cli auth status --json --verify
 pi auth check --provider openai-codex --json
 ```
 
-复制 `.env.example` 为 `.env`，把 `CAS_ALLOWED_USER_IDS` 改成获准使用 Bot 的飞书 `open_id`，然后启动：
+复制 `.env.example` 为 `.env`，配置获准使用 Bot 的飞书 `open_id` 和三个多维表格 ID，然后启动：
 
 ```bash
 set -a
@@ -49,10 +49,30 @@ npm run start:live
 
 进程会等待 `lark-cli` 的精确 ready 标记，并在收到 SIGTERM/SIGINT 后优雅关闭事件流、Pi 会话和 SQLite。systemd 模板位于 `deploy/cas-personal-agent.service`。
 
+当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动目前仅以干跑计划写入“行动同步”，不会真实创建滴答或飞书任务。
+
 只验证真实 Pi SDK、受控工具和多轮上下文，不连接飞书：
 
 ```bash
 npm run verify:pi
+```
+
+验证真实 Base 的幂等投影和关联字段：
+
+```bash
+set -a
+. ./.env
+set +a
+npm run verify:bitable
+```
+
+验证真实 Pi 对混合输入的语义拆分、可逆默认和最小澄清：
+
+```bash
+set -a
+. ./.env
+set +a
+npm run verify:mixed
 ```
 
 ## 验证

@@ -34,6 +34,12 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
       allowedUserIds: ["ou_authorized"],
       piSessionDirectory: join(directory, "pi-sessions"),
       piModel: "openai-codex/gpt-5.6-luna",
+      bitableBaseToken: "bas_state",
+      bitableTables: {
+        projects: "tbl_projects",
+        items: "tbl_items",
+        actionLinks: "tbl_actions",
+      },
     },
     {
       channel,
@@ -48,7 +54,8 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
         runTurn: async (prompt) => ({
           changes: [
             {
-              kind: "item",
+              kind: "upsert_item",
+              itemKey: "live-service-item",
               title: prompt,
               type: "task",
               status: "actionable",
@@ -60,6 +67,9 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
           runtimeDisposed = true;
         },
       }),
+      stateProjector: {
+        project: async () => undefined,
+      },
     },
   );
 
@@ -78,7 +88,16 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
       messageType: "text",
       senderType: "user",
     });
-    assert.deepEqual(replies, ["Pi 回复：继续真实闭环"]);
+    assert.deepEqual(replies, [
+      `Pi 回复：${JSON.stringify({
+        trustedContext: {
+          receivedAt: "2026-09-02T18:20:00.000Z",
+          receivedLocalDateTime: "2026-09-02 11:20:00",
+          userTimeZone: "America/Los_Angeles",
+        },
+        userMessage: "继续真实闭环",
+      })}`,
+    ]);
   } finally {
     await service.stop();
   }

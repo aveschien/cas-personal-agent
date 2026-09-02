@@ -1,5 +1,11 @@
 import { createDevelopmentAgent } from "./development-agent.js";
 import {
+  createBitableStateProjector,
+  type BitableStateProjector,
+  type BitableTables,
+} from "./bitable-state-projector.js";
+import { createLarkBaseClient } from "./lark-base-client.js";
+import {
   createLarkEventChannel,
   type LarkEventChannel,
 } from "./lark-event-channel.js";
@@ -13,6 +19,9 @@ import {
 } from "./pi-interpreter.js";
 import { createPiSdkRuntime } from "./pi-sdk-runtime.js";
 import { createPiSessionRegistry } from "./pi-session-registry.js";
+import { createProjectionRepairWorker } from "./projection-repair-worker.js";
+import { createReminderStore } from "./reminder-store.js";
+import { isSemanticOperation } from "./state-operations.js";
 import { createSupervisor } from "./supervisor.js";
 
 export interface LiveServiceConfig {
@@ -21,6 +30,8 @@ export interface LiveServiceConfig {
   readonly allowedUserIds: readonly string[];
   readonly piSessionDirectory: string;
   readonly piModel: string;
+  readonly bitableBaseToken: string;
+  readonly bitableTables: BitableTables;
 }
 
 export interface LiveService {
@@ -43,6 +54,7 @@ export interface LiveServiceDependencies {
   ) => Promise<PiConversationRuntime>;
   readonly clock?: () => string;
   readonly onError?: (error: unknown) => void;
+  readonly stateProjector?: BitableStateProjector;
 }
 
 export async function createLiveService(
@@ -68,25 +80,61 @@ export async function createLiveService(
     runtime,
     ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
   });
+  const reminderStore =
+    dependencies.stateProjector === undefined
+      ? createReminderStore(config.databasePath)
+      : undefined;
+  const stateProjector =
+    dependencies.stateProjector ??
+    createBitableStateProjector({
+      client: createLarkBaseClient({ baseToken: config.bitableBaseToken }),
+      tables: config.bitableTables,
+      reminders: reminderStore!,
+    });
   const agent = createDevelopmentAgent({
     databasePath: config.databasePath,
     allowedUserIds: config.allowedUserIds,
     interpreter,
     stateAdapter: {
-      project: async () => undefined,
+      async project(changes, context) {
+        if (!changes.every(isSemanticOperation)) {
+          throw new Error("Pi returned a non-semantic production state change");
+        }
+        await stateProjector.project({
+          sourceEventId: context.sourceEventId,
+          operations: changes,
+        });
+      },
     },
   });
+  const repairWorker = createProjectionRepairWorker({
+    databasePath: config.databasePath,
+    projector: stateProjector,
+  });
   const channel = dependencies.channel ?? createLarkEventChannel();
+  const onError =
+    dependencies.onError ?? ((error: unknown) => console.error(error));
   const supervisor = createSupervisor({
     channel,
     replies: dependencies.replies ?? createLarkReplyAdapter(),
     agent,
-    ...(dependencies.onError === undefined
-      ? {}
-      : { onError: dependencies.onError }),
+    onError,
   });
   let started = false;
   let stopped = false;
+  let repairTimer: NodeJS.Timeout | undefined;
+  let repairRun = Promise.resolve();
+  const drainRepairs = (): void => {
+    repairRun = repairRun
+      .then(async () => {
+        for (let count = 0; count < 10; count += 1) {
+          if (!(await repairWorker.runOnce())) {
+            return;
+          }
+        }
+      })
+      .catch(onError);
+  };
 
   return {
     async start() {
@@ -98,6 +146,9 @@ export async function createLiveService(
       }
       await supervisor.start();
       started = true;
+      drainRepairs();
+      repairTimer = setInterval(drainRepairs, 5_000);
+      repairTimer.unref();
     },
 
     waitForExit() {
@@ -110,11 +161,18 @@ export async function createLiveService(
       }
       stopped = true;
       try {
+        if (repairTimer !== undefined) {
+          clearInterval(repairTimer);
+        }
         await supervisor.stop();
+        drainRepairs();
+        await repairRun;
       } finally {
         interpreter.dispose();
         agent.close();
         registry.close();
+        reminderStore?.close();
+        repairWorker.close();
       }
     },
   };

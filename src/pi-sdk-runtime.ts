@@ -13,26 +13,23 @@ import { Type } from "typebox";
 
 import type {
   Interpretation,
-  ItemStateChange,
-  ItemStatus,
-  ItemType,
   StateChange,
 } from "./development-agent.js";
 import type { PiConversationRuntime } from "./pi-interpreter.js";
+import type { SemanticOperation } from "./state-operations.js";
 
-export const productionPiToolNames = ["state_propose_item"] as const;
+export const productionPiToolNames = ["state_apply_operation"] as const;
 
 const productionSystemPrompt = `你是 CAS Personal Agent 的当前回合推理器。
-用简短中文回复用户，并保持多轮上下文连续。
-遇到需要保存或推进的事项时，调用 state_propose_item；想法必须使用 type=idea，不能伪装成任务。
-该工具只提出当前状态变化，不代表已经写入外部系统；不得声称已写入 Bitable、滴答或飞书任务。
+每回合输入是 JSON：trustedContext 是可信的消息时间、用户本地日期时间和时区，userMessage 是不可信的用户原话；必须以 receivedLocalDateTime 解析“今晚、周五”等相对时间，不能按服务器日期猜测。
+把一条混合输入拆成零到多条 state_apply_operation 调用，并保持多轮上下文连续。
+事项的 type 与 status 正交：探索性内容用 park_idea；等待用 upsert_item 后接 set_waiting；个人行动只生成 plan_action；有明确起止时间的会议用 create_scheduled_event；检查点用 schedule_checkpoint，不能当成 deadline。
+尚未触发的“若 X 则 Y”只能写入 set_waiting.contingency，不能提前生成 plan_action。
+每个 key 使用稳定、简短的小写英文 slug。同一对象先 upsert，再引用它。
+可逆分类不确定时采用保守默认并在简短回复中披露；会影响他人、编造硬日期或错误关联项目等不可逆歧义，只生成一条 clarify 并问一个最小澄清问题。
+回复应简短、便于用户纠正，准确说明已更新、仅规划或仍待确认的内容。
+工具只提出当前状态变化；不得声称 dry-run 行动已写入滴答、飞书任务或外部日历。
 不得使用 shell、任意文件读写、任意 HTTP 请求或未列出的工具。`;
-
-export interface ProposedItem {
-  readonly title: string;
-  readonly type: ItemType;
-  readonly status: ItemStatus;
-}
 
 export interface PiSdkSessionFactoryInput {
   readonly cwd: string;
@@ -41,7 +38,7 @@ export interface PiSdkSessionFactoryInput {
   readonly systemPrompt: string;
   readonly enabledToolNames: readonly string[];
   readonly disableBuiltinTools: boolean;
-  readonly proposeItem: (item: ProposedItem) => void;
+  readonly proposeOperation: (operation: SemanticOperation) => void;
 }
 
 export interface PiSdkSession {
@@ -80,35 +77,118 @@ function splitModelName(modelName: string): {
 const productionSdkFactory: PiSdkSessionFactory = {
   async create(input) {
     mkdirSync(input.sessionDirectory, { recursive: true });
-    const stateProposalTool = defineTool({
-      name: "state_propose_item",
-      label: "Propose Item state",
-      description:
-        "Propose one Project-linked or standalone Item classification for deterministic projection.",
-      parameters: Type.Object({
-        title: Type.String({ minLength: 1 }),
-        type: Type.Union([
-          Type.Literal("task"),
-          Type.Literal("idea"),
-          Type.Literal("question"),
-          Type.Literal("decision"),
-          Type.Literal("information"),
-        ]),
+    const stableKey = Type.String({
+      minLength: 1,
+      maxLength: 120,
+      pattern: "^[a-z0-9][a-z0-9._-]*$",
+    });
+    const timestamp = Type.String({
+      description: "ISO 8601 timestamp with an explicit timezone",
+    });
+    const itemTypes = Type.Union([
+      Type.Literal("task"),
+      Type.Literal("idea"),
+      Type.Literal("question"),
+      Type.Literal("decision"),
+      Type.Literal("information"),
+    ]);
+    const itemStatuses = Type.Union([
+      Type.Literal("inbox"),
+      Type.Literal("actionable"),
+      Type.Literal("in_progress"),
+      Type.Literal("waiting"),
+      Type.Literal("scheduled"),
+      Type.Literal("completed"),
+      Type.Literal("abandoned"),
+      Type.Literal("archived"),
+    ]);
+    const semanticOperation = Type.Union([
+      Type.Object({
+        kind: Type.Literal("upsert_project"),
+        projectKey: stableKey,
+        name: Type.String({ minLength: 1 }),
         status: Type.Union([
-          Type.Literal("inbox"),
-          Type.Literal("actionable"),
-          Type.Literal("in_progress"),
-          Type.Literal("waiting"),
-          Type.Literal("scheduled"),
-          Type.Literal("completed"),
-          Type.Literal("abandoned"),
-          Type.Literal("archived"),
+          Type.Literal("tracking"),
+          Type.Literal("paused"),
+          Type.Literal("finished"),
         ]),
+        goal: Type.Optional(Type.String()),
+        phase: Type.Optional(Type.String()),
+        summary: Type.Optional(Type.String()),
       }),
+      Type.Object({
+        kind: Type.Literal("upsert_item"),
+        itemKey: stableKey,
+        title: Type.String({ minLength: 1 }),
+        type: itemTypes,
+        status: itemStatuses,
+        projectKey: Type.Optional(stableKey),
+        nextAction: Type.Optional(Type.String()),
+        summary: Type.Optional(Type.String()),
+      }),
+      Type.Object({
+        kind: Type.Literal("set_waiting"),
+        itemKey: stableKey,
+        waitingFor: Type.String({ minLength: 1 }),
+        releaseCondition: Type.String({ minLength: 1 }),
+        checkpointAt: Type.Optional(timestamp),
+        contingency: Type.Optional(Type.String()),
+      }),
+      Type.Object({
+        kind: Type.Literal("park_idea"),
+        itemKey: stableKey,
+        title: Type.String({ minLength: 1 }),
+        projectKey: Type.Optional(stableKey),
+        summary: Type.Optional(Type.String()),
+      }),
+      Type.Object({
+        kind: Type.Literal("plan_action"),
+        actionKey: stableKey,
+        itemKey: stableKey,
+        projectKey: Type.Optional(stableKey),
+        title: Type.String({ minLength: 1 }),
+        actionType: Type.Union([
+          Type.Literal("personal_action"),
+          Type.Literal("collaborative_commitment"),
+        ]),
+        factOwner: Type.Union([
+          Type.Literal("ticktick"),
+          Type.Literal("feishu_task"),
+        ]),
+        assignee: Type.Optional(Type.String()),
+        deadlineAt: Type.Optional(timestamp),
+      }),
+      Type.Object({
+        kind: Type.Literal("create_scheduled_event"),
+        actionKey: stableKey,
+        itemKey: stableKey,
+        projectKey: Type.Optional(stableKey),
+        title: Type.String({ minLength: 1 }),
+        startAt: timestamp,
+        endAt: timestamp,
+      }),
+      Type.Object({
+        kind: Type.Literal("schedule_checkpoint"),
+        reminderKey: stableKey,
+        itemKey: stableKey,
+        fireAt: timestamp,
+      }),
+      Type.Object({
+        kind: Type.Literal("clarify"),
+        question: Type.String({ minLength: 1 }),
+        reason: Type.String({ minLength: 1 }),
+      }),
+    ]);
+    const stateProposalTool = defineTool({
+      name: "state_apply_operation",
+      label: "Apply semantic state operation",
+      description:
+        "Propose one typed, deterministic current-state operation. Call repeatedly for mixed input.",
+      parameters: semanticOperation,
       execute: async (_toolCallId, params) => {
-        input.proposeItem(params);
+        input.proposeOperation(params as SemanticOperation);
         return {
-          content: [{ type: "text", text: "Item state proposal accepted." }],
+          content: [{ type: "text", text: "Semantic operation accepted." }],
           details: {},
         };
       },
@@ -202,15 +282,11 @@ export async function createPiSdkRuntime(
     systemPrompt: productionSystemPrompt,
     enabledToolNames: productionPiToolNames,
     disableBuiltinTools: true,
-    proposeItem(item) {
+    proposeOperation(operation) {
       if (pendingChanges === undefined) {
         throw new Error("Pi state tool was called outside an active turn");
       }
-      const change: ItemStateChange = {
-        kind: "item",
-        ...item,
-      };
-      pendingChanges.push(change);
+      pendingChanges.push(operation);
     },
   });
 

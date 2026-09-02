@@ -13,6 +13,10 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
         CAS_DATABASE_PATH: "./state/events.sqlite",
         CAS_PI_SESSION_DIR: "./state/pi-sessions",
         CAS_PI_MODEL: "openai-codex/gpt-5.6-luna",
+        CAS_BITABLE_BASE_TOKEN: "bas_state",
+        CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+        CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+        CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
       },
       cwd,
     ),
@@ -22,6 +26,12 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
       allowedUserIds: ["ou_one", "ou_two"],
       piSessionDirectory: resolve(cwd, "state/pi-sessions"),
       piModel: "openai-codex/gpt-5.6-luna",
+      bitableBaseToken: "bas_state",
+      bitableTables: {
+        projects: "tbl_projects",
+        items: "tbl_items",
+        actionLinks: "tbl_actions",
+      },
     },
   );
 

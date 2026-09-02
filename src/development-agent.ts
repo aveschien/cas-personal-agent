@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import { createEventStore, type StoredEvent } from "./event-store.js";
+import {
+  createEventStore,
+  type StoredEvent,
+  type StoredRepair,
+} from "./event-store.js";
+import type {
+  ItemStatus,
+  ItemType,
+  SemanticOperation,
+} from "./state-operations.js";
+
+export type { ItemStatus, ItemType } from "./state-operations.js";
 
 export interface ChannelEvent {
   readonly sourceMessageId: string;
@@ -9,17 +20,6 @@ export interface ChannelEvent {
   readonly rawText: string;
   readonly rawPayload: Readonly<Record<string, unknown>>;
 }
-
-export type ItemType = "task" | "idea" | "question" | "decision" | "information";
-export type ItemStatus =
-  | "inbox"
-  | "actionable"
-  | "in_progress"
-  | "waiting"
-  | "scheduled"
-  | "completed"
-  | "abandoned"
-  | "archived";
 
 export interface ItemStateChange {
   readonly kind: "item";
@@ -35,7 +35,10 @@ export interface ProjectStateChange {
   readonly goal?: string;
 }
 
-export type StateChange = ItemStateChange | ProjectStateChange;
+export type StateChange =
+  | ItemStateChange
+  | ProjectStateChange
+  | SemanticOperation;
 
 export interface Interpretation {
   readonly changes: readonly StateChange[];
@@ -47,7 +50,15 @@ export interface Interpreter {
 }
 
 export interface StateAdapter {
-  project(changes: readonly StateChange[]): Promise<void>;
+  project(
+    changes: readonly StateChange[],
+    context: StateProjectionContext,
+  ): Promise<void>;
+}
+
+export interface StateProjectionContext {
+  readonly sourceEventId: string;
+  readonly receivedAt: string;
 }
 
 export interface IngestResult {
@@ -69,6 +80,7 @@ export interface AgentHealth {
 export interface DevelopmentAgent {
   ingest(event: ChannelEvent): Promise<IngestResult>;
   getEvent(sourceMessageId: string): EventView | undefined;
+  getRepair(sourceMessageId: string): StoredRepair | undefined;
   health(): AgentHealth;
   close(): void;
 }
@@ -118,11 +130,30 @@ export function createDevelopmentAgent(
       let interpretation: Interpretation;
       try {
         interpretation = await options.interpreter.interpret(event);
-        await options.stateAdapter.project(interpretation.changes);
       } catch (error) {
         events.fail(
           event.sourceMessageId,
           error instanceof Error ? error.message : String(error),
+          new Date().toISOString(),
+        );
+        throw error;
+      }
+
+      try {
+        await options.stateAdapter.project(interpretation.changes, {
+          sourceEventId: event.sourceMessageId,
+          receivedAt: event.receivedAt,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        events.deferProjection(
+          event.sourceMessageId,
+          JSON.stringify(interpretation),
+          JSON.stringify({
+            sourceEventId: event.sourceMessageId,
+            changes: interpretation.changes,
+          }),
+          message,
           new Date().toISOString(),
         );
         throw error;
@@ -142,6 +173,10 @@ export function createDevelopmentAgent(
 
     getEvent(sourceMessageId) {
       return events.get(sourceMessageId);
+    },
+
+    getRepair(sourceMessageId) {
+      return events.getRepair(sourceMessageId);
     },
 
     health() {

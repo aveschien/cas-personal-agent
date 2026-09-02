@@ -16,11 +16,12 @@ export async function runPiSmoke(
   const title = "完成真实 Pi smoke 测试";
   try {
     const first = await runtime.runTurn(
-      `请调用 state_propose_item，把“${title}”分类为 task/actionable，然后简短确认。`,
+      `请调用 state_apply_operation，用 key=pi-smoke-item 把“${title}”分类为 task/actionable，然后简短确认。`,
     );
     assert.deepEqual(first.changes, [
       {
-        kind: "item",
+        kind: "upsert_item",
+        itemKey: "pi-smoke-item",
         title,
         type: "task",
         status: "actionable",

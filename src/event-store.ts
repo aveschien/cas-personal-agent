@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { initializeStorage, readStorageHealth } from "./storage.js";
@@ -42,9 +43,27 @@ export interface EventStore {
     updatedAt: string,
   ): void;
   fail(sourceMessageId: string, errorMessage: string, updatedAt: string): void;
+  deferProjection(
+    sourceMessageId: string,
+    parsedIntentJson: string,
+    repairPayloadJson: string,
+    errorMessage: string,
+    updatedAt: string,
+  ): void;
   get(sourceMessageId: string): StoredEvent | undefined;
+  getRepair(sourceMessageId: string): StoredRepair | undefined;
   health(): EventStoreHealth;
   close(): void;
+}
+
+export interface StoredRepair {
+  readonly operationType: string;
+  readonly idempotencyKey: string;
+  readonly status: string;
+  readonly attemptCount: number;
+  readonly maxAttempts: number;
+  readonly payload: unknown;
+  readonly lastError: string | null;
 }
 
 interface EventRow {
@@ -53,6 +72,15 @@ interface EventRow {
   raw_text: string;
   processing_status: string;
   assistant_reply: string | null;
+}
+
+interface RepairRow {
+  operation_type: string;
+  idempotency_key: string;
+  status: string;
+  attempt_count: number;
+  payload_json: string;
+  last_error_json: string | null;
 }
 
 function toStoredEvent(row: EventRow): StoredEvent {
@@ -81,6 +109,44 @@ export function createEventStore(databasePath: string): EventStore {
       )
       .get(sourceMessageId) as unknown as EventRow | undefined;
     return row === undefined ? undefined : toStoredEvent(row);
+  };
+  const getRepair = (sourceMessageId: string): StoredRepair | undefined => {
+    const row = database
+      .prepare(
+        `SELECT operation_type, idempotency_key, status, attempt_count,
+                payload_json, last_error_json
+         FROM outbox
+         WHERE idempotency_key = ?`,
+      )
+      .get(`bitable.project:${sourceMessageId}`) as unknown as
+      | RepairRow
+      | undefined;
+    if (row === undefined) {
+      return undefined;
+    }
+    const payload = JSON.parse(row.payload_json) as {
+      readonly maxAttempts?: unknown;
+      readonly repair?: unknown;
+    };
+    const error =
+      row.last_error_json === null
+        ? undefined
+        : (JSON.parse(row.last_error_json) as { readonly message?: unknown });
+    return {
+      operationType: row.operation_type,
+      idempotencyKey: row.idempotency_key,
+      status: row.status,
+      attemptCount: row.attempt_count,
+      maxAttempts:
+        typeof payload.maxAttempts === "number" ? payload.maxAttempts : 5,
+      payload: payload.repair,
+      lastError:
+        error === undefined
+          ? null
+          : typeof error.message === "string"
+            ? error.message
+            : "Unknown error",
+    };
   };
 
   return {
@@ -149,7 +215,66 @@ export function createEventStore(databasePath: string): EventStore {
         .run(JSON.stringify({ message: errorMessage }), updatedAt, sourceMessageId);
     },
 
+    deferProjection(
+      sourceMessageId,
+      parsedIntentJson,
+      repairPayloadJson,
+      errorMessage,
+      updatedAt,
+    ) {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        database
+          .prepare(
+            `UPDATE events
+             SET parsed_intent_json = ?,
+                 processing_status = 'degraded',
+                 error_json = ?,
+                 updated_at = ?
+             WHERE source_message_id = ?`,
+          )
+          .run(
+            parsedIntentJson,
+            JSON.stringify({ message: errorMessage }),
+            updatedAt,
+            sourceMessageId,
+          );
+        database
+          .prepare(
+            `INSERT INTO outbox (
+              id, operation_type, idempotency_key, payload_json, status,
+              attempt_count, next_attempt_at, last_error_json,
+              created_at, updated_at
+            ) VALUES (?, 'bitable.project', ?, ?, 'retry', 1, ?, ?, ?, ?)
+            ON CONFLICT(idempotency_key) DO UPDATE SET
+              payload_json = excluded.payload_json,
+              status = 'retry',
+              next_attempt_at = excluded.next_attempt_at,
+              last_error_json = excluded.last_error_json,
+              updated_at = excluded.updated_at`,
+          )
+          .run(
+            randomUUID(),
+            `bitable.project:${sourceMessageId}`,
+            JSON.stringify({
+              maxAttempts: 5,
+              repair: JSON.parse(repairPayloadJson) as unknown,
+            }),
+            updatedAt,
+            JSON.stringify({ message: errorMessage }),
+            updatedAt,
+            updatedAt,
+          );
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    },
+
     get,
+
+    getRepair,
 
     health() {
       return readStorageHealth(database);

@@ -20,7 +20,13 @@ test("the live CLI starts once and closes resources after shutdown", async () =>
 
   const running = runLiveCli({
     cwd: "/srv/cas-personal-agent",
-    environment: { CAS_ALLOWED_USER_IDS: "ou_owner" },
+    environment: {
+      CAS_ALLOWED_USER_IDS: "ou_owner",
+      CAS_BITABLE_BASE_TOKEN: "bas_state",
+      CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+      CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+      CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+    },
     waitForShutdown: shutdown.promise,
     serviceFactory: async (config) => {
       assert.deepEqual(config.allowedUserIds, ["ou_owner"]);

@@ -12,7 +12,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
     "start:live": "node dist/src/live-cli.js",
-    "verify:pi": "npm run build && node dist/src/pi-smoke.js"
+    "verify:pi": "npm run build && node dist/src/pi-smoke.js",
+    "verify:bitable": "npm run build && node dist/src/bitable-smoke.js",
+    "verify:mixed": "npm run build && node dist/src/mixed-input-smoke.js"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

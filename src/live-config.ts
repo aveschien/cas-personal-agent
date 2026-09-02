@@ -8,6 +8,18 @@ export interface LiveEnvironment {
   readonly CAS_DATABASE_PATH?: string;
   readonly CAS_PI_SESSION_DIR?: string;
   readonly CAS_PI_MODEL?: string;
+  readonly CAS_BITABLE_BASE_TOKEN?: string;
+  readonly CAS_BITABLE_PROJECTS_TABLE_ID?: string;
+  readonly CAS_BITABLE_ITEMS_TABLE_ID?: string;
+  readonly CAS_BITABLE_ACTION_LINKS_TABLE_ID?: string;
+}
+
+function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
+  const value = environment[name]?.trim();
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${String(name)} is required`);
+  }
+  return value;
 }
 
 function parseAllowlist(value: string | undefined): string[] {
@@ -48,5 +60,14 @@ export function loadLiveConfig(
       environment.CAS_PI_SESSION_DIR ?? "./var/pi-sessions",
     ),
     piModel,
+    bitableBaseToken: required(environment, "CAS_BITABLE_BASE_TOKEN"),
+    bitableTables: {
+      projects: required(environment, "CAS_BITABLE_PROJECTS_TABLE_ID"),
+      items: required(environment, "CAS_BITABLE_ITEMS_TABLE_ID"),
+      actionLinks: required(
+        environment,
+        "CAS_BITABLE_ACTION_LINKS_TABLE_ID",
+      ),
+    },
   };
 }
