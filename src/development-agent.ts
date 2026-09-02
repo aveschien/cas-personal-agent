@@ -10,6 +10,8 @@ import type {
   ItemType,
   SemanticOperation,
 } from "./state-operations.js";
+import type { MemoryCandidate } from "./memory.js";
+import { validateMemoryCandidate } from "./memory.js";
 
 export type { ItemStatus, ItemType } from "./state-operations.js";
 
@@ -43,6 +45,7 @@ export type StateChange =
 export interface Interpretation {
   readonly changes: readonly StateChange[];
   readonly acknowledgement: string;
+  readonly memoryCandidates?: readonly MemoryCandidate[];
 }
 
 export interface Interpreter {
@@ -90,6 +93,8 @@ export interface DevelopmentAgentOptions {
   readonly allowedUserIds: readonly string[];
   readonly interpreter: Interpreter;
   readonly stateAdapter: StateAdapter;
+  readonly memoryRetentionEnabled?: boolean;
+  readonly onBackgroundError?: (error: unknown) => void;
 }
 
 export function createDevelopmentAgent(
@@ -159,11 +164,24 @@ export function createDevelopmentAgent(
         throw error;
       }
 
+      const memoryRetentions =
+        options.memoryRetentionEnabled === true
+          ? (interpretation.memoryCandidates ?? []).flatMap((candidate) => {
+              try {
+                validateMemoryCandidate(candidate);
+                return [{ candidate, occurredAt: event.receivedAt }];
+              } catch (error) {
+                options.onBackgroundError?.(error);
+                return [];
+              }
+            })
+          : [];
       events.complete(
         event.sourceMessageId,
         JSON.stringify(interpretation),
         interpretation.acknowledgement,
         new Date().toISOString(),
+        memoryRetentions,
       );
       return {
         status: "completed",

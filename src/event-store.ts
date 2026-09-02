@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
+import {
+  memoryOperationId,
+  type MemoryCandidate,
+  validateMemoryCandidate,
+} from "./memory.js";
 import { initializeStorage, readStorageHealth } from "./storage.js";
 
 export interface NewEventRecord {
@@ -41,6 +46,7 @@ export interface EventStore {
     parsedIntentJson: string,
     acknowledgement: string,
     updatedAt: string,
+    memoryRetentions?: readonly MemoryRetentionInput[],
   ): void;
   fail(sourceMessageId: string, errorMessage: string, updatedAt: string): void;
   deferProjection(
@@ -54,6 +60,11 @@ export interface EventStore {
   getRepair(sourceMessageId: string): StoredRepair | undefined;
   health(): EventStoreHealth;
   close(): void;
+}
+
+export interface MemoryRetentionInput {
+  readonly candidate: MemoryCandidate;
+  readonly occurredAt: string;
 }
 
 export interface StoredRepair {
@@ -190,17 +201,61 @@ export function createEventStore(databasePath: string): EventStore {
       };
     },
 
-    complete(sourceMessageId, parsedIntentJson, acknowledgement, updatedAt) {
-      database
-        .prepare(
-          `UPDATE events
-           SET parsed_intent_json = ?,
-               assistant_reply = ?,
-               processing_status = 'completed',
-               updated_at = ?
-           WHERE source_message_id = ?`,
-        )
-        .run(parsedIntentJson, acknowledgement, updatedAt, sourceMessageId);
+    complete(
+      sourceMessageId,
+      parsedIntentJson,
+      acknowledgement,
+      updatedAt,
+      memoryRetentions = [],
+    ) {
+      for (const retention of memoryRetentions) {
+        validateMemoryCandidate(retention.candidate);
+      }
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        database
+          .prepare(
+            `UPDATE events
+             SET parsed_intent_json = ?,
+                 assistant_reply = ?,
+                 processing_status = 'completed',
+                 updated_at = ?
+             WHERE source_message_id = ?`,
+          )
+          .run(parsedIntentJson, acknowledgement, updatedAt, sourceMessageId);
+        const insert = database.prepare(
+          `INSERT OR IGNORE INTO outbox (
+            id, operation_type, idempotency_key, payload_json, status,
+            attempt_count, next_attempt_at, last_error_json,
+            created_at, updated_at
+          ) VALUES (?, 'memory.retain', ?, ?, 'pending', 0, ?, NULL, ?, ?)`,
+        );
+        for (const retention of memoryRetentions) {
+          const idempotencyKey =
+            `memory.retain:${sourceMessageId}:${retention.candidate.key}`;
+          insert.run(
+            randomUUID(),
+            idempotencyKey,
+            JSON.stringify({
+              maxAttempts: 5,
+              sourceEventId: sourceMessageId,
+              occurredAt: retention.occurredAt,
+              operationId: memoryOperationId(
+                sourceMessageId,
+                retention.candidate.key,
+              ),
+              candidate: retention.candidate,
+            }),
+            updatedAt,
+            updatedAt,
+            updatedAt,
+          );
+        }
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
     },
 
     fail(sourceMessageId, errorMessage, updatedAt) {

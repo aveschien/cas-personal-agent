@@ -5,3 +5,4 @@ var/
 *.sqlite-shm
 *.sqlite-wal
 .env
+.env.hindsight

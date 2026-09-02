@@ -73,3 +73,51 @@ test("the Pi SDK runtime exposes only the controlled semantic operation tool", a
   runtime.dispose();
   assert.equal(disposed, true);
 });
+
+test("memory-enabled Pi can propose a selected durable memory", async () => {
+  let factoryInput: PiSdkSessionFactoryInput | undefined;
+  const runtime = await createPiSdkRuntime({
+    cwd: "/srv/cas-agent",
+    sessionDirectory: "/srv/cas-agent/var/pi-sessions",
+    modelName: "openai-codex/gpt-5.6-luna",
+    memoryEnabled: true,
+    sdkFactory: {
+      create: async (input) => {
+        factoryInput = input;
+        return {
+          sessionId: "pi-memory-tool",
+          sessionPath: join(input.sessionDirectory, "pi-memory-tool.jsonl"),
+          subscribeText: () => () => undefined,
+          prompt: async () => {
+            input.proposeMemoryCandidate({
+              key: "reply-style",
+              category: "preference",
+              content: "用户偏好先给结论。",
+            });
+          },
+          dispose: () => undefined,
+        };
+      },
+    },
+  });
+
+  try {
+    assert.deepEqual(await runtime.runTurn("以后先说结论"), {
+      changes: [],
+      acknowledgement: "已收到，我会继续处理这条信息。",
+      memoryCandidates: [
+        {
+          key: "reply-style",
+          category: "preference",
+          content: "用户偏好先给结论。",
+        },
+      ],
+    });
+    assert.deepEqual(factoryInput?.enabledToolNames, [
+      "state_apply_operation",
+      "memory_propose_retain",
+    ]);
+  } finally {
+    runtime.dispose();
+  }
+});

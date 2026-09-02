@@ -32,6 +32,14 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
         items: "tbl_items",
         actionLinks: "tbl_actions",
       },
+      memory: {
+        enabled: true,
+        baseUrl: "http://127.0.0.1:8888",
+        bankId: "cas-personal-agent",
+        recallTimeoutMs: 2_000,
+        recallMaxResults: 5,
+        recallMaxTokens: 800,
+      },
     },
   );
 

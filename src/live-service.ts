@@ -6,6 +6,11 @@ import {
 } from "./bitable-state-projector.js";
 import { createLarkBaseClient } from "./lark-base-client.js";
 import {
+  createHindsightMemoryAdapter,
+  type MemoryAdapter,
+} from "./memory.js";
+import { createMemoryRetainWorker } from "./memory-retain-worker.js";
+import {
   createLarkEventChannel,
   type LarkEventChannel,
 } from "./lark-event-channel.js";
@@ -32,6 +37,14 @@ export interface LiveServiceConfig {
   readonly piModel: string;
   readonly bitableBaseToken: string;
   readonly bitableTables: BitableTables;
+  readonly memory: {
+    readonly enabled: boolean;
+    readonly baseUrl: string;
+    readonly bankId: string;
+    readonly recallTimeoutMs: number;
+    readonly recallMaxResults: number;
+    readonly recallMaxTokens: number;
+  };
 }
 
 export interface LiveService {
@@ -44,6 +57,7 @@ export interface RuntimeFactoryInput {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly modelName: string;
+  readonly memoryEnabled: boolean;
 }
 
 export interface LiveServiceDependencies {
@@ -55,12 +69,15 @@ export interface LiveServiceDependencies {
   readonly clock?: () => string;
   readonly onError?: (error: unknown) => void;
   readonly stateProjector?: BitableStateProjector;
+  readonly memoryAdapter?: MemoryAdapter;
 }
 
 export async function createLiveService(
   config: LiveServiceConfig,
   dependencies: LiveServiceDependencies = {},
 ): Promise<LiveService> {
+  const onError =
+    dependencies.onError ?? ((error: unknown) => console.error(error));
   const registry = createPiSessionRegistry(config.databasePath);
   let runtime: PiConversationRuntime;
   try {
@@ -68,16 +85,30 @@ export async function createLiveService(
       cwd: config.cwd,
       sessionDirectory: config.piSessionDirectory,
       modelName: config.piModel,
+      memoryEnabled: config.memory.enabled,
     });
   } catch (error) {
     registry.close();
     throw error;
   }
 
+  const memory = config.memory.enabled
+    ? (dependencies.memoryAdapter ??
+      createHindsightMemoryAdapter({
+        baseUrl: config.memory.baseUrl,
+        bankId: config.memory.bankId,
+      }))
+    : undefined;
+
   const interpreter = createPiInterpreter({
     logicalConversationId: "cas-main",
     registry,
     runtime,
+    ...(memory === undefined ? {} : { memory }),
+    memoryRecallTimeoutMs: config.memory.recallTimeoutMs,
+    memoryRecallMaxResults: config.memory.recallMaxResults,
+    memoryRecallMaxTokens: config.memory.recallMaxTokens,
+    onMemoryError: onError,
     ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
   });
   const reminderStore =
@@ -106,14 +137,21 @@ export async function createLiveService(
         });
       },
     },
+    memoryRetentionEnabled: config.memory.enabled,
+    onBackgroundError: onError,
   });
   const repairWorker = createProjectionRepairWorker({
     databasePath: config.databasePath,
     projector: stateProjector,
   });
+  const memoryWorker =
+    memory === undefined
+      ? undefined
+      : createMemoryRetainWorker({
+          databasePath: config.databasePath,
+          memory,
+        });
   const channel = dependencies.channel ?? createLarkEventChannel();
-  const onError =
-    dependencies.onError ?? ((error: unknown) => console.error(error));
   const supervisor = createSupervisor({
     channel,
     replies: dependencies.replies ?? createLarkReplyAdapter(),
@@ -129,7 +167,14 @@ export async function createLiveService(
       .then(async () => {
         for (let count = 0; count < 10; count += 1) {
           if (!(await repairWorker.runOnce())) {
-            return;
+            break;
+          }
+        }
+        if (memoryWorker !== undefined) {
+          for (let count = 0; count < 10; count += 1) {
+            if (!(await memoryWorker.runOnce())) {
+              break;
+            }
           }
         }
       })
@@ -173,6 +218,7 @@ export async function createLiveService(
         registry.close();
         reminderStore?.close();
         repairWorker.close();
+        memoryWorker?.close();
       }
     },
   };

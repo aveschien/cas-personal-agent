@@ -4,6 +4,7 @@ import type {
   Interpreter,
 } from "./development-agent.js";
 import type { PiSessionRegistry } from "./pi-session-registry.js";
+import type { MemoryAdapter, RecalledMemory } from "./memory.js";
 
 export interface PiConversationRuntime {
   readonly sessionId: string;
@@ -22,6 +23,11 @@ export interface PiInterpreterOptions {
   readonly runtime: PiConversationRuntime;
   readonly clock?: () => string;
   readonly userTimeZone?: string;
+  readonly memory?: Pick<MemoryAdapter, "recall">;
+  readonly memoryRecallTimeoutMs?: number;
+  readonly memoryRecallMaxResults?: number;
+  readonly memoryRecallMaxTokens?: number;
+  readonly onMemoryError?: (error: unknown) => void;
 }
 
 function localDateTime(isoTimestamp: string, timeZone: string): string {
@@ -45,6 +51,38 @@ export function createPiInterpreter(
 ): PiInterpreter {
   const clock = options.clock ?? (() => new Date().toISOString());
   const userTimeZone = options.userTimeZone ?? "America/Los_Angeles";
+  const recallMemory = async (event: ChannelEvent): Promise<readonly RecalledMemory[]> => {
+    if (options.memory === undefined) {
+      return [];
+    }
+    const controller = new AbortController();
+    const timeoutMs = options.memoryRecallTimeoutMs ?? 2_000;
+    let timeout: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`Hindsight recall timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        options.memory.recall({
+          query: event.rawText,
+          maxResults: options.memoryRecallMaxResults ?? 5,
+          maxTokens: options.memoryRecallMaxTokens ?? 800,
+          signal: controller.signal,
+        }),
+        timeoutPromise,
+      ]);
+    } catch (error) {
+      options.onMemoryError?.(error);
+      return [];
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+    }
+  };
   options.registry.activate({
     logicalConversationId: options.logicalConversationId,
     piSessionId: options.runtime.sessionId,
@@ -54,6 +92,7 @@ export function createPiInterpreter(
 
   return {
     async interpret(event: ChannelEvent) {
+      const recalledMemories = await recallMemory(event);
       const result = await options.runtime.runTurn(
         JSON.stringify({
           trustedContext: {
@@ -63,6 +102,9 @@ export function createPiInterpreter(
               userTimeZone,
             ),
             userTimeZone,
+            ...(recalledMemories.length === 0
+              ? {}
+              : { recalledMemories }),
           },
           userMessage: event.rawText,
         }),

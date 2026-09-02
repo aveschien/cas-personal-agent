@@ -75,6 +75,54 @@ set +a
 npm run verify:mixed
 ```
 
+## Hindsight 长期记忆
+
+生产配置默认启用记忆。每回合在 Pi 之前执行最多 5 条、800 token、2 秒超时的轻量 recall；失败会静默降级。Pi 只能提出明确纠正、长期偏好/边界、重要决定或项目变化、行动结果和 Handoff 等高价值候选。候选与 Event 完成在同一个 SQLite 事务中进入 outbox，随后用稳定的 Hindsight `operation_id` 异步 retain，最多尝试 5 次。原始消息仍只完整保存在 SQLite。
+
+VPS 使用现有 PostgreSQL 16，不启用 pg0。一次性准备步骤：
+
+```bash
+uv tool install hindsight-api-slim==0.9.2
+sudo -u postgres createuser --pwprompt hindsight
+sudo -u postgres createdb --owner hindsight hindsight
+sudo -u postgres psql --dbname hindsight --command 'CREATE EXTENSION IF NOT EXISTS vector;'
+mkdir -p ./var/hindsight-codex
+cp .env.hindsight.example .env.hindsight
+chmod 600 .env.hindsight
+```
+
+在 `.env.hindsight` 中填写独立数据库密码、Cloudflare account ID 和最小权限 token；不要把真实凭据提交到 Git。Hindsight 使用独立的 Codex OAuth 目录，按当前 Codex CLI 完成一次设备授权：
+
+```bash
+CODEX_HOME="$PWD/var/hindsight-codex" codex login --device-auth
+```
+
+授权完成后安装并启动服务：
+
+```bash
+sudo install -m 0644 deploy/hindsight-api.service /etc/systemd/system/hindsight-api.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now hindsight-api.service
+sudo systemctl status hindsight-api.service
+```
+
+该服务只绑定 `127.0.0.1:8888`，MCP 关闭，API 进程数固定为 1，并使用 Hindsight 默认的内置后台 worker；这个单实例原型不需要另起 `hindsight-worker` 服务。
+
+验证真实 Pi 的高价值候选筛选，不连接 Hindsight：
+
+```bash
+npm run verify:memory-candidate
+```
+
+Hindsight ready 后，在隔离的 smoke bank 中执行一次真实异步 retain 与跨客户端 recall：
+
+```bash
+set -a
+. ./.env
+set +a
+npm run verify:memory
+```
+
 ## 验证
 
 ```bash
