@@ -64,16 +64,16 @@ test("the Pi Interpreter preserves multi-turn state and records each completed t
       JSON.stringify({
         trustedContext: {
           receivedAt: "2026-09-02T18:10:00.000Z",
-          receivedLocalDateTime: "2026-09-02 11:10:00",
-          userTimeZone: "America/Los_Angeles",
+          receivedLocalDateTime: "2026-09-03 02:10:00",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage: "记住报价项目",
       }),
       JSON.stringify({
         trustedContext: {
           receivedAt: "2026-09-02T18:11:00.000Z",
-          receivedLocalDateTime: "2026-09-02 11:11:00",
-          userTimeZone: "America/Los_Angeles",
+          receivedLocalDateTime: "2026-09-03 02:11:00",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage: "刚才说的项目是什么",
       }),

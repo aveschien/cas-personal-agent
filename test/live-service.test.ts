@@ -100,8 +100,8 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
       `Pi 回复：${JSON.stringify({
         trustedContext: {
           receivedAt: "2026-09-02T18:20:00.000Z",
-          receivedLocalDateTime: "2026-09-02 11:20:00",
-          userTimeZone: "America/Los_Angeles",
+          receivedLocalDateTime: "2026-09-03 02:20:00",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage: "继续真实闭环",
       })}`,

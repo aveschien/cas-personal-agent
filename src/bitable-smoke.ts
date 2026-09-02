@@ -55,7 +55,7 @@ export async function runBitableSmoke(cwd = process.cwd()): Promise<void> {
       itemKey: "acceptance-proposal-feedback",
       waitingFor: "张总的方案反馈",
       releaseCondition: "收到明确反馈",
-      checkpointAt: "2026-09-04T09:00:00-07:00",
+      checkpointAt: "2026-09-04T09:00:00+08:00",
       contingency: "若周五仍无反馈，则联系张总",
     },
     {
@@ -75,7 +75,7 @@ export async function runBitableSmoke(cwd = process.cwd()): Promise<void> {
       title: "今晚修改病理 PPT 页",
       actionType: "personal_action",
       factOwner: "ticktick",
-      deadlineAt: "2026-09-02T23:59:00-07:00",
+      deadlineAt: "2026-09-02T23:59:00+08:00",
     },
     {
       kind: "park_idea",
@@ -99,14 +99,14 @@ export async function runBitableSmoke(cwd = process.cwd()): Promise<void> {
       itemKey: "acceptance-hospital-meeting",
       projectKey: "acceptance-hospital-proposal",
       title: "和院方开会",
-      startAt: "2026-09-03T15:00:00-07:00",
-      endAt: "2026-09-03T16:00:00-07:00",
+      startAt: "2026-09-03T15:00:00+08:00",
+      endAt: "2026-09-03T16:00:00+08:00",
     },
     {
       kind: "schedule_checkpoint",
       reminderKey: "acceptance-proposal-review",
       itemKey: "acceptance-proposal-feedback",
-      fireAt: "2026-09-04T09:00:00-07:00",
+      fireAt: "2026-09-04T09:00:00+08:00",
     },
   ];
 

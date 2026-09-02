@@ -66,7 +66,7 @@ test("typed state operations upsert linked Bitable records idempotently", async 
       itemKey: "proposal-feedback",
       waitingFor: "张总反馈",
       releaseCondition: "收到明确反馈",
-      checkpointAt: "2026-09-04T09:00:00-07:00",
+      checkpointAt: "2026-09-04T09:00:00+08:00",
       contingency: "若无反馈则联系张总",
     },
     {
@@ -77,13 +77,13 @@ test("typed state operations upsert linked Bitable records idempotently", async 
       title: "联系张总",
       actionType: "personal_action",
       factOwner: "ticktick",
-      deadlineAt: "2026-09-04T17:00:00-07:00",
+      deadlineAt: "2026-09-04T17:00:00+08:00",
     },
     {
       kind: "schedule_checkpoint",
       reminderKey: "proposal-review",
       itemKey: "proposal-feedback",
-      fireAt: "2026-09-04T09:00:00-07:00",
+      fireAt: "2026-09-04T09:00:00+08:00",
     },
   ];
 
@@ -109,7 +109,7 @@ test("typed state operations upsert linked Bitable records idempotently", async 
     当前摘要: null,
     在等什么: "张总反馈",
     解除条件: "收到明确反馈",
-    检查点: "2026-09-04T09:00:00-07:00",
+    检查点: "2026-09-04T09:00:00+08:00",
     "条件/预案": "若无反馈则联系张总",
     稍后区: false,
     item_key: "proposal-feedback",
@@ -123,7 +123,7 @@ test("typed state operations upsert linked Bitable records idempotently", async 
     所属项目: [{ id: project?.recordId }],
     所属事项: [{ id: item?.recordId }],
     负责人: null,
-    deadline: "2026-09-04T17:00:00-07:00",
+    deadline: "2026-09-04T17:00:00+08:00",
     开始时间: null,
     结束时间: null,
     同步状态: ["pending"],

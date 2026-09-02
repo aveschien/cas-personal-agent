@@ -2,6 +2,8 @@
 
 单用户、私有部署的个人工作管理 Agent。开发入口提供确定性 NDJSON 闭环；真实入口通过受管的 `lark-cli` Event Channel 接收飞书私聊，由持久化 Pi SDK 会话解释消息，并用 `lark-cli` 回复。所有原始 Event 会先写入 SQLite，再通过类型化语义操作投影到飞书多维表格。
 
+所有用户表达和 Agent 生成的业务时间固定按 `Asia/Shanghai`（北京时间）解释与写入，不依赖 VPS 的系统时区。原始 Event 的接收时间仍以 UTC 保存，作为排序和幂等的机器时间。
+
 ## 本地运行
 
 要求 Node.js 24.14 或更高的 24.x 版本。

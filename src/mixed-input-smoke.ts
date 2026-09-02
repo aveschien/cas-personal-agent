@@ -44,9 +44,9 @@ export async function runMixedInputSmoke(cwd = process.cwd()): Promise<void> {
     const mixed = await runtime.runTurn(
       JSON.stringify({
         trustedContext: {
-          receivedAt: "2026-09-02T16:00:00.000Z",
+          receivedAt: "2026-09-02T01:00:00.000Z",
           receivedLocalDateTime: "2026-09-02 09:00:00",
-          userTimeZone: "America/Los_Angeles",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage:
           "张总说方案这周应该有反馈，2026年9月4日上午9点如果没消息我再找他。今晚11点前把病理那页 PPT 改一下。数据治理那里也许可以换个讲法，不过先别管。",
@@ -72,7 +72,7 @@ export async function runMixedInputSmoke(cwd = process.cwd()): Promise<void> {
       plan.actionLinks.find(
         (action) => action.actionType === "personal_action",
       )?.deadlineAt,
-      "2026-09-02T23:00:00-07:00",
+      "2026-09-02T23:00:00+08:00",
     );
     await projector.project({
       sourceEventId: "dev-pi-mixed-001",
@@ -82,9 +82,9 @@ export async function runMixedInputSmoke(cwd = process.cwd()): Promise<void> {
     const ambiguous = await runtime.runTurn(
       JSON.stringify({
         trustedContext: {
-          receivedAt: "2026-09-02T16:05:00.000Z",
+          receivedAt: "2026-09-02T01:05:00.000Z",
           receivedLocalDateTime: "2026-09-02 09:05:00",
-          userTimeZone: "America/Los_Angeles",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage: "下周想和院方开个会。",
       }),

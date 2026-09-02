@@ -22,9 +22,9 @@ export async function runMemoryCandidateSmoke(
     const preference = await runtime.runTurn(
       JSON.stringify({
         trustedContext: {
-          receivedAt: "2026-09-02T20:00:00.000Z",
+          receivedAt: "2026-09-02T05:00:00.000Z",
           receivedLocalDateTime: "2026-09-02 13:00:00",
-          userTimeZone: "America/Los_Angeles",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage: "以后回复我时请先给结论，再补必要细节。这是长期偏好。",
       }),
@@ -36,9 +36,9 @@ export async function runMemoryCandidateSmoke(
     const transient = await runtime.runTurn(
       JSON.stringify({
         trustedContext: {
-          receivedAt: "2026-09-02T20:01:00.000Z",
+          receivedAt: "2026-09-02T05:01:00.000Z",
           receivedLocalDateTime: "2026-09-02 13:01:00",
-          userTimeZone: "America/Los_Angeles",
+          userTimeZone: "Asia/Shanghai",
         },
         userMessage: "谢谢。",
       }),

@@ -1,3 +1,5 @@
+import { normalizeBusinessTimestamp } from "./business-time.js";
+
 export type ItemType = "task" | "idea" | "question" | "decision" | "information";
 export type ItemStatus =
   | "inbox"
@@ -186,17 +188,6 @@ function assertKey(value: string, label: string): void {
   }
 }
 
-function assertTimestamp(value: string, label: string): void {
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/.test(
-      value,
-    ) ||
-    Number.isNaN(Date.parse(value))
-  ) {
-    throw new Error(`${label} must be an ISO 8601 timestamp with timezone`);
-  }
-}
-
 function optional<T>(
   value: T | undefined,
   name: string,
@@ -251,15 +242,19 @@ export function compileBitableProjection(
         if (item === undefined) {
           throw new Error(`set_waiting references unknown Item ${operation.itemKey}`);
         }
-        if (operation.checkpointAt !== undefined) {
-          assertTimestamp(operation.checkpointAt, "checkpointAt");
-        }
+        const checkpointAt =
+          operation.checkpointAt === undefined
+            ? undefined
+            : normalizeBusinessTimestamp(
+                operation.checkpointAt,
+                "checkpointAt",
+              );
         items.set(operation.itemKey, {
           ...item,
           status: "waiting",
           waitingFor: operation.waitingFor,
           releaseCondition: operation.releaseCondition,
-          ...optional(operation.checkpointAt, "checkpointAt"),
+          ...optional(checkpointAt, "checkpointAt"),
           ...optional(operation.contingency, "contingency"),
         } as ItemProjection);
         break;
@@ -281,9 +276,10 @@ export function compileBitableProjection(
       case "plan_action": {
         assertKey(operation.actionKey, "actionKey");
         assertKey(operation.itemKey, "itemKey");
-        if (operation.deadlineAt !== undefined) {
-          assertTimestamp(operation.deadlineAt, "deadlineAt");
-        }
+        const deadlineAt =
+          operation.deadlineAt === undefined
+            ? undefined
+            : normalizeBusinessTimestamp(operation.deadlineAt, "deadlineAt");
         actionLinks.push({
           key: operation.actionKey,
           itemKey: operation.itemKey,
@@ -292,7 +288,7 @@ export function compileBitableProjection(
           actionType: operation.actionType,
           factOwner: operation.factOwner,
           ...optional(operation.assignee, "assignee"),
-          ...optional(operation.deadlineAt, "deadlineAt"),
+          ...optional(deadlineAt, "deadlineAt"),
           syncStatus: "pending",
           sourceEventId: input.sourceEventId,
         } as ActionLinkProjection);
@@ -301,9 +297,9 @@ export function compileBitableProjection(
       case "create_scheduled_event": {
         assertKey(operation.actionKey, "actionKey");
         assertKey(operation.itemKey, "itemKey");
-        assertTimestamp(operation.startAt, "startAt");
-        assertTimestamp(operation.endAt, "endAt");
-        if (Date.parse(operation.endAt) <= Date.parse(operation.startAt)) {
+        const startAt = normalizeBusinessTimestamp(operation.startAt, "startAt");
+        const endAt = normalizeBusinessTimestamp(operation.endAt, "endAt");
+        if (Date.parse(endAt) <= Date.parse(startAt)) {
           throw new Error("scheduled event endAt must be after startAt");
         }
         actionLinks.push({
@@ -313,8 +309,8 @@ export function compileBitableProjection(
           title: operation.title,
           actionType: "scheduled_event",
           factOwner: "bitable",
-          startAt: operation.startAt,
-          endAt: operation.endAt,
+          startAt,
+          endAt,
           syncStatus: "pending",
           sourceEventId: input.sourceEventId,
         } as ActionLinkProjection);
@@ -323,11 +319,11 @@ export function compileBitableProjection(
       case "schedule_checkpoint": {
         assertKey(operation.reminderKey, "reminderKey");
         assertKey(operation.itemKey, "itemKey");
-        assertTimestamp(operation.fireAt, "fireAt");
+        const fireAt = normalizeBusinessTimestamp(operation.fireAt, "fireAt");
         checkpoints.push({
           key: operation.reminderKey,
           itemKey: operation.itemKey,
-          fireAt: operation.fireAt,
+          fireAt,
           sourceEventId: input.sourceEventId,
         });
         break;

@@ -40,7 +40,7 @@ test("Pi can emit multiple controlled semantic operations for one mixed input", 
               itemKey: "proposal-feedback",
               waitingFor: "张总反馈",
               releaseCondition: "收到反馈",
-              checkpointAt: "2026-09-04T09:00:00-07:00",
+              checkpointAt: "2026-09-04T09:00:00+08:00",
               contingency: "若仍无反馈则联系张总",
             });
             input.proposeOperation({

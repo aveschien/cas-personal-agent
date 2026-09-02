@@ -12,7 +12,7 @@ test("checkpoint projection is durable and idempotent", async () => {
   const checkpoint = {
     key: "proposal-review",
     itemKey: "proposal-feedback",
-    fireAt: "2026-09-04T09:00:00-07:00",
+    fireAt: "2026-09-04T09:00:00+08:00",
     sourceEventId: "om_reminder_1",
   };
   try {
@@ -21,7 +21,7 @@ test("checkpoint projection is durable and idempotent", async () => {
     assert.deepEqual(store.get("proposal-review"), {
       key: "proposal-review",
       itemRecordId: "rec_item_1",
-      fireAt: "2026-09-04T09:00:00-07:00",
+      fireAt: "2026-09-04T09:00:00+08:00",
       kind: "checkpoint",
       status: "pending",
       sourceEventId: "om_reminder_1",

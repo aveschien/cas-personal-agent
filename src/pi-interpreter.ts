@@ -3,6 +3,10 @@ import type {
   Interpretation,
   Interpreter,
 } from "./development-agent.js";
+import {
+  businessTimeZone,
+  formatBusinessLocalDateTime,
+} from "./business-time.js";
 import type { PiSessionRegistry } from "./pi-session-registry.js";
 import type { MemoryAdapter, RecalledMemory } from "./memory.js";
 
@@ -22,7 +26,6 @@ export interface PiInterpreterOptions {
   readonly registry: PiSessionRegistry;
   readonly runtime: PiConversationRuntime;
   readonly clock?: () => string;
-  readonly userTimeZone?: string;
   readonly memory?: Pick<MemoryAdapter, "recall">;
   readonly memoryRecallTimeoutMs?: number;
   readonly memoryRecallMaxResults?: number;
@@ -30,27 +33,10 @@ export interface PiInterpreterOptions {
   readonly onMemoryError?: (error: unknown) => void;
 }
 
-function localDateTime(isoTimestamp: string, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(isoTimestamp));
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((candidate) => candidate.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
-}
-
 export function createPiInterpreter(
   options: PiInterpreterOptions,
 ): PiInterpreter {
   const clock = options.clock ?? (() => new Date().toISOString());
-  const userTimeZone = options.userTimeZone ?? "America/Los_Angeles";
   const recallMemory = async (event: ChannelEvent): Promise<readonly RecalledMemory[]> => {
     if (options.memory === undefined) {
       return [];
@@ -97,11 +83,8 @@ export function createPiInterpreter(
         JSON.stringify({
           trustedContext: {
             receivedAt: event.receivedAt,
-            receivedLocalDateTime: localDateTime(
-              event.receivedAt,
-              userTimeZone,
-            ),
-            userTimeZone,
+            receivedLocalDateTime: formatBusinessLocalDateTime(event.receivedAt),
+            userTimeZone: businessTimeZone,
             ...(recalledMemories.length === 0
               ? {}
               : { recalledMemories }),
