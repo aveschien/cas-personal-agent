@@ -14,7 +14,7 @@ test("an authorized Channel event becomes one durable Event and a concise acknow
     allowedUserIds: ["user-1"],
     interpreter: {
       interpret: async () => ({
-        changes: [{ kind: "item", title: "修改病理 PPT 页" }],
+        changes: [{ kind: "item", title: "修改病理 PPT 页", type: "task", status: "actionable" }],
         acknowledgement: "已记录：修改病理 PPT 页。",
       }),
     },
@@ -39,7 +39,7 @@ test("an authorized Channel event becomes one durable Event and a concise acknow
       acknowledgement: "已记录：修改病理 PPT 页。",
     });
     assert.deepEqual(projectedChanges, [
-      { kind: "item", title: "修改病理 PPT 页" },
+      { kind: "item", title: "修改病理 PPT 页", type: "task", status: "actionable" },
     ]);
     assert.deepEqual(agent.getEvent("message-1"), {
       sourceMessageId: "message-1",

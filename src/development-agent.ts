@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { initializeStorage, readStorageHealth } from "./storage.js";
-import { DatabaseSync } from "node:sqlite";
+
+import { createEventStore, type StoredEvent } from "./event-store.js";
 
 export interface ChannelEvent {
   readonly sourceMessageId: string;
@@ -10,10 +10,32 @@ export interface ChannelEvent {
   readonly rawPayload: Readonly<Record<string, unknown>>;
 }
 
-export interface StateChange {
-  readonly kind: string;
-  readonly [key: string]: unknown;
+export type ItemType = "task" | "idea" | "question" | "decision" | "information";
+export type ItemStatus =
+  | "inbox"
+  | "actionable"
+  | "in_progress"
+  | "waiting"
+  | "scheduled"
+  | "completed"
+  | "abandoned"
+  | "archived";
+
+export interface ItemStateChange {
+  readonly kind: "item";
+  readonly title: string;
+  readonly type: ItemType;
+  readonly status: ItemStatus;
 }
+
+export interface ProjectStateChange {
+  readonly kind: "project";
+  readonly name: string;
+  readonly status: "tracking" | "paused" | "finished";
+  readonly goal?: string;
+}
+
+export type StateChange = ItemStateChange | ProjectStateChange;
 
 export interface Interpretation {
   readonly changes: readonly StateChange[];
@@ -33,13 +55,7 @@ export interface IngestResult {
   readonly acknowledgement: string;
 }
 
-export interface EventView {
-  readonly sourceMessageId: string;
-  readonly userId: string;
-  readonly rawText: string;
-  readonly processingStatus: string;
-  readonly acknowledgement: string | null;
-}
+export type EventView = StoredEvent;
 
 export interface AgentHealth {
   readonly status: "ok" | "degraded";
@@ -64,23 +80,11 @@ export interface DevelopmentAgentOptions {
   readonly stateAdapter: StateAdapter;
 }
 
-interface EventRow {
-  source_message_id: string;
-  user_id: string;
-  raw_text: string;
-  processing_status: string;
-  assistant_reply: string | null;
-}
-
 export function createDevelopmentAgent(
   options: DevelopmentAgentOptions,
 ): DevelopmentAgent {
-  const database = new DatabaseSync(options.databasePath, {
-    enableForeignKeyConstraints: true,
-  });
+  const events = createEventStore(options.databasePath);
   const allowedUserIds = new Set(options.allowedUserIds);
-
-  initializeStorage(database);
 
   return {
     async ingest(event) {
@@ -92,52 +96,22 @@ export function createDevelopmentAgent(
       }
 
       const now = new Date().toISOString();
-      const insertion = database
-        .prepare(
-          `INSERT OR IGNORE INTO events (
-            id,
-            source,
-            source_message_id,
-            received_at,
-            user_id,
-            raw_text,
-            raw_payload_json,
-            logical_conversation_id,
-            processing_status,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          randomUUID(),
-          "feishu",
-          event.sourceMessageId,
-          event.receivedAt,
-          event.userId,
-          event.rawText,
-          JSON.stringify(event.rawPayload),
-          "cas-main",
-          "received",
-          now,
-          now,
-        );
-
-      if (insertion.changes === 0) {
-        const existing = database
-          .prepare(
-            `SELECT assistant_reply FROM events WHERE source_message_id = ?`,
-          )
-          .get(event.sourceMessageId) as unknown as
-          | { assistant_reply: string | null }
-          | undefined;
-        if (existing === undefined) {
-          throw new Error("Duplicate Event could not be loaded");
-        }
-
+      const receipt = events.receive({
+        id: randomUUID(),
+        source: "feishu",
+        sourceMessageId: event.sourceMessageId,
+        receivedAt: event.receivedAt,
+        userId: event.userId,
+        rawText: event.rawText,
+        rawPayloadJson: JSON.stringify(event.rawPayload),
+        logicalConversationId: "cas-main",
+        createdAt: now,
+      });
+      if (!receipt.inserted) {
         return {
           status: "duplicate",
           acknowledgement:
-            existing.assistant_reply ?? "这条消息已记录，正在处理。",
+            receipt.event.acknowledgement ?? "这条消息已记录，正在处理。",
         };
       }
 
@@ -146,40 +120,20 @@ export function createDevelopmentAgent(
         interpretation = await options.interpreter.interpret(event);
         await options.stateAdapter.project(interpretation.changes);
       } catch (error) {
-        database
-          .prepare(
-            `UPDATE events
-             SET processing_status = 'failed',
-                 error_json = ?,
-                 updated_at = ?
-             WHERE source_message_id = ?`,
-          )
-          .run(
-            JSON.stringify({
-              message: error instanceof Error ? error.message : String(error),
-            }),
-            new Date().toISOString(),
-            event.sourceMessageId,
-          );
+        events.fail(
+          event.sourceMessageId,
+          error instanceof Error ? error.message : String(error),
+          new Date().toISOString(),
+        );
         throw error;
       }
 
-      database
-        .prepare(
-          `UPDATE events
-           SET parsed_intent_json = ?,
-               assistant_reply = ?,
-               processing_status = 'completed',
-               updated_at = ?
-           WHERE source_message_id = ?`,
-        )
-        .run(
-          JSON.stringify(interpretation),
-          interpretation.acknowledgement,
-          new Date().toISOString(),
-          event.sourceMessageId,
-        );
-
+      events.complete(
+        event.sourceMessageId,
+        JSON.stringify(interpretation),
+        interpretation.acknowledgement,
+        new Date().toISOString(),
+      );
       return {
         status: "completed",
         acknowledgement: interpretation.acknowledgement,
@@ -187,30 +141,11 @@ export function createDevelopmentAgent(
     },
 
     getEvent(sourceMessageId) {
-      const row = database
-        .prepare(
-          `SELECT source_message_id, user_id, raw_text,
-                  processing_status, assistant_reply
-           FROM events
-           WHERE source_message_id = ?`,
-        )
-        .get(sourceMessageId) as unknown as EventRow | undefined;
-
-      if (row === undefined) {
-        return undefined;
-      }
-
-      return {
-        sourceMessageId: row.source_message_id,
-        userId: row.user_id,
-        rawText: row.raw_text,
-        processingStatus: row.processing_status,
-        acknowledgement: row.assistant_reply,
-      };
+      return events.get(sourceMessageId);
     },
 
     health() {
-      const storage = readStorageHealth(database);
+      const storage = events.health();
       return {
         status: storage.status,
         mode: "development",
@@ -222,7 +157,7 @@ export function createDevelopmentAgent(
     },
 
     close() {
-      database.close();
+      events.close();
     },
   };
 }

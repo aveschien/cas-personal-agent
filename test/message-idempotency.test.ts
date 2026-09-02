@@ -17,7 +17,7 @@ test("re-delivery of one Feishu message does not repeat interpretation or projec
       interpret: async () => {
         interpretationCount += 1;
         return {
-          changes: [{ kind: "idea", title: "换一种数据治理讲法" }],
+          changes: [{ kind: "item", title: "换一种数据治理讲法", type: "idea", status: "inbox" }],
           acknowledgement: "已暂存这个想法。",
         };
       },
