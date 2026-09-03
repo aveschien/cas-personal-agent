@@ -9,6 +9,15 @@ import {
   type ProjectProjection,
   type ReminderProjection,
 } from "./state-operations.js";
+import type { BitableAuthorityStore } from "./bitable-authority-store.js";
+import {
+  bitableValuesEqual,
+  selectBitableFields,
+} from "./bitable-authority-store.js";
+import {
+  authoritativeItemFields,
+  authoritativeProjectFields,
+} from "./authoritative-bitable-reader.js";
 
 export interface BitableRecord {
   readonly recordId: string;
@@ -20,6 +29,7 @@ export interface BitableRecordClient {
     tableId: string,
     keyField: string,
     key: string,
+    fields?: readonly string[],
   ): Promise<BitableRecord | undefined>;
   create(
     tableId: string,
@@ -69,6 +79,8 @@ export interface BitableStateProjectorOptions {
   readonly tables: BitableTables;
   readonly reminders: ReminderProjectionSink;
   readonly actions?: ActionProjectionSink;
+  readonly authority?: BitableAuthorityStore;
+  readonly clock?: () => string;
 }
 
 export interface BitableStateProjector {
@@ -165,16 +177,53 @@ async function upsert(
   key: string,
   fields: Readonly<Record<string, unknown>>,
   clearFields: Readonly<Record<string, unknown>> = {},
+  authority?: BitableAuthorityStore,
+  authoritativeFields: readonly string[] = [],
+  now = new Date().toISOString(),
 ): Promise<BitableRecord> {
-  const existing = await client.findByKey(tableId, keyField, key);
+  const existing = await client.findByKey(
+    tableId,
+    keyField,
+    key,
+    authoritativeFields,
+  );
   if (existing === undefined) {
-    return client.create(tableId, keyField, key, fields);
+    const created = await client.create(tableId, keyField, key, fields);
+    authority?.saveSnapshot({
+      tableId,
+      recordId: created.recordId,
+      stableKey: key,
+      fields: selectBitableFields(created.fields, authoritativeFields),
+      projectedAt: now,
+    });
+    return created;
   }
   const currentFields = { ...clearFields, ...fields };
-  await client.update(tableId, existing.recordId, currentFields);
+  const snapshot = authority?.getSnapshot(tableId, key);
+  const protectedFields = new Set(
+    snapshot === undefined
+      ? []
+      : authoritativeFields.filter(
+          (field) =>
+            !bitableValuesEqual(existing.fields[field], snapshot.fields[field]) &&
+            !bitableValuesEqual(existing.fields[field], currentFields[field]),
+        ),
+  );
+  const permittedFields = Object.fromEntries(
+    Object.entries(currentFields).filter(([field]) => !protectedFields.has(field)),
+  );
+  await client.update(tableId, existing.recordId, permittedFields);
+  const resultingFields = { ...existing.fields, ...permittedFields };
+  authority?.saveSnapshot({
+    tableId,
+    recordId: existing.recordId,
+    stableKey: key,
+    fields: selectBitableFields(resultingFields, authoritativeFields),
+    projectedAt: now,
+  });
   return {
     recordId: existing.recordId,
-    fields: { ...existing.fields, ...currentFields },
+    fields: resultingFields,
   };
 }
 
@@ -206,9 +255,11 @@ const clearedActionFields = {
 export function createBitableStateProjector(
   options: BitableStateProjectorOptions,
 ): BitableStateProjector {
+  const clock = options.clock ?? (() => new Date().toISOString());
   return {
     async project(input) {
       const plan = compileBitableProjection(input);
+      const projectedAt = clock();
       const projectRecordIds = new Map<string, string>();
       const itemRecordIds = new Map<string, string>();
 
@@ -220,6 +271,9 @@ export function createBitableStateProjector(
           project.key,
           projectFields(project),
           clearedProjectFields,
+          options.authority,
+          authoritativeProjectFields,
+          projectedAt,
         );
         projectRecordIds.set(project.key, record.recordId);
       }
@@ -255,6 +309,9 @@ export function createBitableStateProjector(
           item.key,
           itemFields(item, projectRecordId),
           clearedItemFields,
+          options.authority,
+          authoritativeItemFields,
+          projectedAt,
         );
         itemRecordIds.set(item.key, record.recordId);
       }

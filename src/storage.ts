@@ -1,7 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const schemaVersion = 2;
+const schemaVersion = 3;
 const requiredTables = [
+  "bitable_authoritative_corrections",
+  "bitable_projection_snapshots",
   "events",
   "focus_state",
   "message_inbox",
@@ -158,6 +160,24 @@ export function initializeStorage(database: DatabaseSync): void {
       fired_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS bitable_projection_snapshots (
+      table_id TEXT NOT NULL,
+      record_id TEXT NOT NULL,
+      stable_key TEXT NOT NULL,
+      fields_json TEXT NOT NULL,
+      projected_at TEXT NOT NULL,
+      PRIMARY KEY (table_id, stable_key)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS bitable_authoritative_corrections (
+      fingerprint TEXT PRIMARY KEY,
+      table_id TEXT NOT NULL,
+      record_id TEXT NOT NULL,
+      stable_key TEXT NOT NULL,
+      changed_fields_json TEXT NOT NULL,
+      observed_at TEXT NOT NULL
     ) STRICT;
 
     INSERT OR IGNORE INTO schema_migrations (version, applied_at)

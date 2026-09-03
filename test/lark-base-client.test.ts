@@ -22,8 +22,8 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
       ok: true,
       identity: "user",
       data: {
-        data: [["proposal-feedback"]],
-        fields: ["item_key"],
+        data: [["proposal-feedback", ["等待"]]],
+        fields: ["item_key", "状态"],
         record_id_list: ["rec_item_1"],
       },
     },
@@ -58,10 +58,12 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
   ]);
 
   assert.deepEqual(
-    await client.findByKey("tbl_items", "item_key", "proposal-feedback"),
+    await client.findByKey("tbl_items", "item_key", "proposal-feedback", [
+      "状态",
+    ]),
     {
       recordId: "rec_item_1",
-      fields: { item_key: "proposal-feedback" },
+      fields: { item_key: "proposal-feedback", 状态: ["等待"] },
     },
   );
   assert.deepEqual(
@@ -111,7 +113,7 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
     JSON.stringify({
       keyword: "proposal-feedback",
       search_fields: ["item_key"],
-      select_fields: ["item_key"],
+      select_fields: ["item_key", "状态"],
       filter: {
         logic: "and",
         conditions: [["item_key", "==", "proposal-feedback"]],

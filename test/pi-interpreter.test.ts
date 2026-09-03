@@ -225,3 +225,65 @@ test("authoritative Action corrections reach Pi and become memory candidates", a
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("authoritative Bitable corrections reach Pi ahead of stale context", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-agent-bitable-authority-"));
+  const registry = createPiSessionRegistry(join(directory, "events.sqlite"));
+  let prompt = "";
+  const interpreter = createPiInterpreter({
+    logicalConversationId: "cas-main",
+    registry,
+    runtime: {
+      sessionId: "pi-bitable-authority",
+      sessionPath: join(directory, "pi-bitable-authority.jsonl"),
+      runTurn: async (value) => {
+        prompt = value;
+        return { changes: [], acknowledgement: "已按表格最新状态处理。" };
+      },
+      dispose: () => undefined,
+    },
+    authoritativeBitable: {
+      reconcile: async () => ({
+        projects: [],
+        items: [
+          {
+            itemKey: "proposal-feedback",
+            title: "等待方案反馈",
+            status: "完成",
+            parked: false,
+            correctedFields: ["状态"],
+          },
+        ],
+        memoryCandidates: [
+          {
+            key: "bitable-correction-abc",
+            category: "correction",
+            content: "权威纠正：事项已在多维表格中设为完成。",
+          },
+        ],
+      }),
+    },
+  });
+  try {
+    const result = await interpreter.interpret({
+      sourceMessageId: "om_bitable_authority",
+      receivedAt: "2026-09-03T03:00:00.000Z",
+      userId: "ou_authorized",
+      rawText: "继续处理这个事项",
+      rawPayload: {},
+    });
+    assert.match(prompt, /"authoritativeItems"/);
+    assert.match(prompt, /"correctedFields":\["状态"\]/);
+    assert.deepEqual(result.memoryCandidates, [
+      {
+        key: "bitable-correction-abc",
+        category: "correction",
+        content: "权威纠正：事项已在多维表格中设为完成。",
+      },
+    ]);
+  } finally {
+    interpreter.dispose();
+    registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

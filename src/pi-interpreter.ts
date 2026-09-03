@@ -14,6 +14,10 @@ import type {
   AuthoritativeActionReader,
   AuthoritativeActionReconciliation,
 } from "./authoritative-action-reader.js";
+import type {
+  AuthoritativeBitableReader,
+  AuthoritativeBitableReconciliation,
+} from "./authoritative-bitable-reader.js";
 
 export interface PiConversationRuntime {
   readonly sessionId: string;
@@ -40,6 +44,7 @@ export interface PiInterpreterOptions {
   readonly memoryRecallMaxTokens?: number;
   readonly onMemoryError?: (error: unknown) => void;
   readonly authoritativeActions?: AuthoritativeActionReader;
+  readonly authoritativeBitable?: AuthoritativeBitableReader;
   readonly onCurrentStateError?: (error: unknown) => void;
 }
 
@@ -90,6 +95,17 @@ export function createPiInterpreter(
       return { states: [], memoryCandidates: [] };
     }
   };
+  const reconcileBitable = async (): Promise<AuthoritativeBitableReconciliation> => {
+    if (options.authoritativeBitable === undefined) {
+      return { projects: [], items: [], memoryCandidates: [] };
+    }
+    try {
+      return await options.authoritativeBitable.reconcile(clock());
+    } catch (error) {
+      options.onCurrentStateError?.(error);
+      return { projects: [], items: [], memoryCandidates: [] };
+    }
+  };
   options.registry.activate({
     logicalConversationId: options.logicalConversationId,
     piSessionId: options.runtime.sessionId,
@@ -99,10 +115,12 @@ export function createPiInterpreter(
 
   return {
     async interpret(event: ChannelEvent) {
-      const [recalledMemories, authoritativeActions] = await Promise.all([
-        recallMemory(event),
-        reconcileActions(),
-      ]);
+      const [recalledMemories, authoritativeActions, authoritativeBitable] =
+        await Promise.all([
+          recallMemory(event),
+          reconcileActions(),
+          reconcileBitable(),
+        ]);
       const result = await options.runtime.runTurn(
         JSON.stringify({
           trustedContext: {
@@ -115,6 +133,12 @@ export function createPiInterpreter(
             ...(authoritativeActions.states.length === 0
               ? {}
               : { authoritativeActions: authoritativeActions.states }),
+            ...(authoritativeBitable.projects.length === 0
+              ? {}
+              : { authoritativeProjects: authoritativeBitable.projects }),
+            ...(authoritativeBitable.items.length === 0
+              ? {}
+              : { authoritativeItems: authoritativeBitable.items }),
           },
           userMessage: event.rawText,
         }),
@@ -123,6 +147,7 @@ export function createPiInterpreter(
       options.registry.recordCompletedTurn(options.runtime.sessionId, clock());
       const memoryCandidates = [
         ...authoritativeActions.memoryCandidates,
+        ...authoritativeBitable.memoryCandidates,
         ...(result.memoryCandidates ?? []),
       ];
       return {

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   createBitableStateProjector,
   type BitableRecordClient,
 } from "../src/bitable-state-projector.js";
 import type { SemanticOperation } from "../src/state-operations.js";
+import { createBitableAuthorityStore } from "../src/bitable-authority-store.js";
 
 test("typed state operations upsert linked Bitable records idempotently", async () => {
   const records = new Map<
@@ -210,4 +214,97 @@ test("an unknown free-text Project phase cannot block the rest of its projection
     created_by_agent: true,
     当前摘要: "继续推进",
   });
+});
+
+test("a newer manual Bitable correction is not overwritten by a stale projection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-projector-authority-"));
+  const store = createBitableAuthorityStore(join(directory, "events.sqlite"));
+  const fields: Record<string, unknown> = {
+    item_key: "proposal-feedback",
+    事项: "等待方案反馈",
+    状态: ["完成"],
+    类型: ["任务"],
+    下一步: "归档材料",
+    项目: [],
+    稍后区: false,
+  };
+  store.saveSnapshot({
+    tableId: "tbl_items",
+    recordId: "rec_item",
+    stableKey: "proposal-feedback",
+    fields: {
+      事项: "等待方案反馈",
+      项目: null,
+      类型: ["任务"],
+      状态: ["等待"],
+      下一步: null,
+      当前摘要: null,
+      在等什么: "张总反馈",
+      解除条件: null,
+      检查点: null,
+      "条件/预案": null,
+      稍后区: false,
+    },
+    projectedAt: "2026-09-03T01:00:00.000Z",
+  });
+  const updates: Readonly<Record<string, unknown>>[] = [];
+  const projector = createBitableStateProjector({
+    client: {
+      findByKey: async (tableId) =>
+        tableId === "tbl_items"
+          ? { recordId: "rec_item", fields: { ...fields } }
+          : undefined,
+      create: async () => {
+        throw new Error("not used");
+      },
+      update: async (_tableId, _recordId, update) => {
+        updates.push(update);
+        Object.assign(fields, update);
+      },
+    },
+    tables: {
+      projects: "tbl_projects",
+      items: "tbl_items",
+      actionLinks: "tbl_actions",
+    },
+    reminders: { schedule: async () => undefined },
+    authority: store,
+    clock: () => "2026-09-03T02:00:00.000Z",
+  });
+
+  await projector.project({
+    sourceEventId: "om_stale",
+    operations: [
+      {
+        kind: "upsert_item",
+        itemKey: "proposal-feedback",
+        title: "等待方案反馈",
+        type: "task",
+        status: "waiting",
+        summary: "继续等待",
+      },
+    ],
+  });
+
+  assert.deepEqual(fields.状态, ["完成"]);
+  assert.equal(fields.下一步, "归档材料");
+  assert.equal(fields.当前摘要, "继续等待");
+  assert.equal("状态" in (updates[0] ?? {}), false);
+  assert.equal("下一步" in (updates[0] ?? {}), false);
+  assert.deepEqual(store.getSnapshot("tbl_items", "proposal-feedback")?.fields, {
+    事项: "等待方案反馈",
+    项目: [],
+    类型: ["任务"],
+    状态: ["完成"],
+    下一步: "归档材料",
+    当前摘要: "继续等待",
+    在等什么: null,
+    解除条件: null,
+    检查点: null,
+    "条件/预案": null,
+    稍后区: false,
+  });
+
+  store.close();
+  await rm(directory, { recursive: true, force: true });
 });

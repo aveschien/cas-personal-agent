@@ -145,7 +145,8 @@ export function createLarkBaseClient(
       }
     },
 
-    async findByKey(tableId, keyField, key) {
+    async findByKey(tableId, keyField, key, requestedFields = []) {
+      const selectedFields = [...new Set([keyField, ...requestedFields])];
       const result = await runner.run(command, [
         "base",
         "+record-search",
@@ -157,7 +158,7 @@ export function createLarkBaseClient(
         JSON.stringify({
           keyword: key,
           search_fields: [keyField],
-          select_fields: [keyField],
+          select_fields: selectedFields,
           filter: {
             logic: "and",
             conditions: [[keyField, "==", key]],
@@ -187,7 +188,21 @@ export function createLarkBaseClient(
       if (matches.length > 1) {
         throw new Error(`Bitable contains duplicate ${keyField} ${key}`);
       }
-      return matches[0];
+      const match = matches[0];
+      if (match === undefined) {
+        return undefined;
+      }
+      const rowIndex = ids.indexOf(match.recordId);
+      const row = rows[rowIndex];
+      if (!Array.isArray(row)) {
+        throw new Error("Lark Base lookup returned an invalid row");
+      }
+      return {
+        recordId: match.recordId,
+        fields: Object.fromEntries(
+          fields.map((field, index) => [field as string, row[index]]),
+        ),
+      };
     },
 
     async create(tableId, keyField, key, fields) {

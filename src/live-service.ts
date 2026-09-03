@@ -9,6 +9,11 @@ import {
   createAuthoritativeActionReader,
   type AuthoritativeActionReader,
 } from "./authoritative-action-reader.js";
+import {
+  createAuthoritativeBitableReader,
+  type AuthoritativeBitableReader,
+} from "./authoritative-bitable-reader.js";
+import { createBitableAuthorityStore } from "./bitable-authority-store.js";
 import { createCollaborativeActionOutbox } from "./collaborative-action-outbox.js";
 import { createCollaborativeActionWorker } from "./collaborative-action-worker.js";
 import { createDevelopmentAgent } from "./development-agent.js";
@@ -121,6 +126,7 @@ export interface LiveServiceDependencies {
   readonly collaborativeActionAdapter?: CollaborativeActionAdapter;
   readonly collaboratorResolver?: CollaboratorResolver;
   readonly authoritativeActionReader?: AuthoritativeActionReader;
+  readonly authoritativeBitableReader?: AuthoritativeBitableReader;
   readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
 }
@@ -177,6 +183,10 @@ export async function createLiveService(
   const bitableClient = ownsStateProjector
     ? createLarkBaseClient({ baseToken: config.bitableBaseToken })
     : undefined;
+  const bitableAuthorityStore =
+    bitableClient === undefined
+      ? undefined
+      : createBitableAuthorityStore(config.databasePath);
   const personalActionAdapter =
     config.personalActions?.enabled === true
       ? (dependencies.personalActionAdapter ??
@@ -213,6 +223,15 @@ export async function createLiveService(
             : { collaborative: { adapter: collaborativeActionAdapter } }),
           onError,
         }));
+  const authoritativeBitable =
+    dependencies.authoritativeBitableReader ??
+    (bitableClient === undefined || bitableAuthorityStore === undefined
+      ? undefined
+      : createAuthoritativeBitableReader({
+          bitable: bitableClient,
+          tables: config.bitableTables,
+          store: bitableAuthorityStore,
+        }));
   const interpreter = createPiInterpreter({
     logicalConversationId: "cas-main",
     registry,
@@ -221,6 +240,9 @@ export async function createLiveService(
     ...(authoritativeActions === undefined
       ? {}
       : { authoritativeActions }),
+    ...(authoritativeBitable === undefined
+      ? {}
+      : { authoritativeBitable }),
     memoryRecallTimeoutMs: config.memory.recallTimeoutMs,
     memoryRecallMaxResults: config.memory.recallMaxResults,
     memoryRecallMaxTokens: config.memory.recallMaxTokens,
@@ -234,6 +256,9 @@ export async function createLiveService(
       client: bitableClient!,
       tables: config.bitableTables,
       reminders: reminderStore!,
+      ...(bitableAuthorityStore === undefined
+        ? {}
+        : { authority: bitableAuthorityStore }),
       ...(actionOutbox === undefined && collaborativeActionOutbox === undefined
         ? {}
         : {
@@ -431,6 +456,7 @@ export async function createLiveService(
         actionWorker?.close();
         collaborativeActionWorker?.close();
         reminderWorker?.close();
+        bitableAuthorityStore?.close();
       }
     },
   };
