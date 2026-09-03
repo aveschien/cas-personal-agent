@@ -14,6 +14,10 @@ import {
   type AuthoritativeBitableReader,
 } from "./authoritative-bitable-reader.js";
 import { createBitableAuthorityStore } from "./bitable-authority-store.js";
+import {
+  createCurrentAttentionResolver,
+  type CurrentAttentionResolver,
+} from "./current-attention.js";
 import { createCollaborativeActionOutbox } from "./collaborative-action-outbox.js";
 import { createCollaborativeActionWorker } from "./collaborative-action-worker.js";
 import { createDevelopmentAgent } from "./development-agent.js";
@@ -61,6 +65,7 @@ import {
 import { isSemanticOperation } from "./state-operations.js";
 import { createSupervisor } from "./supervisor.js";
 import { createTickTickActionAdapter } from "./ticktick-action-adapter.js";
+import { createFocusStateStore } from "./focus-state-store.js";
 
 export interface LiveServiceConfig {
   readonly cwd: string;
@@ -127,6 +132,7 @@ export interface LiveServiceDependencies {
   readonly collaboratorResolver?: CollaboratorResolver;
   readonly authoritativeActionReader?: AuthoritativeActionReader;
   readonly authoritativeBitableReader?: AuthoritativeBitableReader;
+  readonly currentAttentionResolver?: CurrentAttentionResolver;
   readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
 }
@@ -187,6 +193,10 @@ export async function createLiveService(
     bitableClient === undefined
       ? undefined
       : createBitableAuthorityStore(config.databasePath);
+  const focusStateStore =
+    bitableClient === undefined
+      ? undefined
+      : createFocusStateStore(config.databasePath);
   const personalActionAdapter =
     config.personalActions?.enabled === true
       ? (dependencies.personalActionAdapter ??
@@ -232,6 +242,18 @@ export async function createLiveService(
           tables: config.bitableTables,
           store: bitableAuthorityStore,
         }));
+  const currentAttention =
+    dependencies.currentAttentionResolver ??
+    (bitableClient === undefined || focusStateStore === undefined
+      ? undefined
+      : createCurrentAttentionResolver({
+          logicalConversationId: "cas-main",
+          bitable: bitableClient,
+          itemsTableId: config.bitableTables.items,
+          actionLinksTableId: config.bitableTables.actionLinks,
+          focus: focusStateStore,
+          onSyncError: onError,
+        }));
   const interpreter = createPiInterpreter({
     logicalConversationId: "cas-main",
     registry,
@@ -243,6 +265,7 @@ export async function createLiveService(
     ...(authoritativeBitable === undefined
       ? {}
       : { authoritativeBitable }),
+    ...(currentAttention === undefined ? {} : { currentAttention }),
     memoryRecallTimeoutMs: config.memory.recallTimeoutMs,
     memoryRecallMaxResults: config.memory.recallMaxResults,
     memoryRecallMaxTokens: config.memory.recallMaxTokens,
@@ -457,6 +480,7 @@ export async function createLiveService(
         collaborativeActionWorker?.close();
         reminderWorker?.close();
         bitableAuthorityStore?.close();
+        focusStateStore?.close();
       }
     },
   };

@@ -247,6 +247,7 @@ test("authoritative Bitable corrections reach Pi ahead of stale context", async 
         projects: [],
         items: [
           {
+            recordId: "rec_item",
             itemKey: "proposal-feedback",
             title: "等待方案反馈",
             status: "完成",

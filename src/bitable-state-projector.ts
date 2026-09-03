@@ -49,6 +49,13 @@ export interface BitableRecordQueryClient extends BitableRecordClient {
     tableId: string,
     fields: readonly string[],
   ): Promise<readonly BitableRecord[]>;
+  batchUpdate?(
+    tableId: string,
+    updates: readonly {
+      readonly recordId: string;
+      readonly fields: Readonly<Record<string, unknown>>;
+    }[],
+  ): Promise<void>;
 }
 
 export interface ReminderProjectionSink {

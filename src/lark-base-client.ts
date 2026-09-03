@@ -246,5 +246,30 @@ export function createLarkBaseClient(
       ]);
       parseSuccess(result, "record update");
     },
+
+    async batchUpdate(tableId, updates) {
+      for (let offset = 0; offset < updates.length; offset += 200) {
+        const batch = updates.slice(offset, offset + 200);
+        const result = await runner.run(command, [
+          "base",
+          "+record-batch-update",
+          "--base-token",
+          options.baseToken,
+          "--table-id",
+          tableId,
+          "--json",
+          JSON.stringify({
+            update_records: Object.fromEntries(
+              batch.map((update) => [update.recordId, update.fields]),
+            ),
+          }),
+          "--as",
+          "user",
+          "--format",
+          "json",
+        ]);
+        parseSuccess(result, "record batch update");
+      }
+    },
   };
 }

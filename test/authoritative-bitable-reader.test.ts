@@ -59,6 +59,7 @@ test("manual Bitable Item edits become authoritative state and one memory candid
 
   const corrected = await reader.reconcile("2026-09-03T02:00:00.000Z");
   assert.deepEqual(corrected.items[0], {
+    recordId: "rec_item",
     itemKey: "proposal-feedback",
     title: "等待方案反馈",
     projectKey: "hospital-proposal",
@@ -72,6 +73,7 @@ test("manual Bitable Item edits become authoritative state and one memory candid
     contingency: "没回复就跟进",
     parked: false,
     updatedAt: "2026-09-03T02:00:00.000Z",
+    inCurrentAttention: false,
     correctedFields: ["状态", "下一步"],
   });
   assert.equal(corrected.memoryCandidates.length, 1);

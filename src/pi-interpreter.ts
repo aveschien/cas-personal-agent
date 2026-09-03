@@ -18,6 +18,10 @@ import type {
   AuthoritativeBitableReader,
   AuthoritativeBitableReconciliation,
 } from "./authoritative-bitable-reader.js";
+import type {
+  CurrentAttentionResolution,
+  CurrentAttentionResolver,
+} from "./current-attention.js";
 
 export interface PiConversationRuntime {
   readonly sessionId: string;
@@ -45,6 +49,7 @@ export interface PiInterpreterOptions {
   readonly onMemoryError?: (error: unknown) => void;
   readonly authoritativeActions?: AuthoritativeActionReader;
   readonly authoritativeBitable?: AuthoritativeBitableReader;
+  readonly currentAttention?: CurrentAttentionResolver;
   readonly onCurrentStateError?: (error: unknown) => void;
 }
 
@@ -106,6 +111,25 @@ export function createPiInterpreter(
       return { projects: [], items: [], memoryCandidates: [] };
     }
   };
+  const resolveAttention = async (
+    event: ChannelEvent,
+    bitable: AuthoritativeBitableReconciliation,
+  ): Promise<CurrentAttentionResolution | undefined> => {
+    if (options.currentAttention === undefined) {
+      return undefined;
+    }
+    try {
+      return await options.currentAttention.resolve({
+        message: event.rawText,
+        now: clock(),
+        projects: bitable.currentProjects ?? bitable.projects,
+        items: bitable.currentItems ?? bitable.items,
+      });
+    } catch (error) {
+      options.onCurrentStateError?.(error);
+      return undefined;
+    }
+  };
   options.registry.activate({
     logicalConversationId: options.logicalConversationId,
     piSessionId: options.runtime.sessionId,
@@ -121,6 +145,7 @@ export function createPiInterpreter(
           reconcileActions(),
           reconcileBitable(),
         ]);
+      const attention = await resolveAttention(event, authoritativeBitable);
       const result = await options.runtime.runTurn(
         JSON.stringify({
           trustedContext: {
@@ -139,6 +164,7 @@ export function createPiInterpreter(
             ...(authoritativeBitable.items.length === 0
               ? {}
               : { authoritativeItems: authoritativeBitable.items }),
+            ...(attention === undefined ? {} : { attention }),
           },
           userMessage: event.rawText,
         }),

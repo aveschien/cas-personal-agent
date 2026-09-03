@@ -33,6 +33,7 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
       data: { record_id_list: ["rec_item_2"] },
     },
     { ok: true, identity: "user", data: {} },
+    { ok: true, identity: "user", data: {} },
   ];
   const runner: CommandRunner = {
     run: async (command, args) => {
@@ -79,6 +80,16 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
     },
   );
   await client.update("tbl_items", "rec_item_2", { 状态: ["等待"] });
+  await client.batchUpdate?.("tbl_items", [
+    {
+      recordId: "rec_item_1",
+      fields: { 当前注意力: true, 注意力顺序: 1 },
+    },
+    {
+      recordId: "rec_item_2",
+      fields: { 当前注意力: false, 注意力顺序: null },
+    },
+  ]);
 
   assert.deepEqual(calls[0], [
     "lark-cli",
@@ -127,6 +138,13 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
   ]);
   assert.equal(calls[2]?.[2], "+record-batch-create");
   assert.equal(calls[3]?.[2], "+record-batch-update");
+  assert.equal(calls[4]?.[2], "+record-batch-update");
+  assert.deepEqual(JSON.parse(calls[4]?.[8] ?? "{}"), {
+    update_records: {
+      rec_item_1: { 当前注意力: true, 注意力顺序: 1 },
+      rec_item_2: { 当前注意力: false, 注意力顺序: null },
+    },
+  });
 });
 
 test("the Lark Base client rejects duplicate stable keys", async () => {

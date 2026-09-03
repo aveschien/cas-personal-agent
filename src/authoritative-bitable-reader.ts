@@ -9,6 +9,7 @@ import type { BitableRecordQueryClient, BitableTables } from "./bitable-state-pr
 import type { MemoryCandidate } from "./memory.js";
 
 export interface AuthoritativeProjectState {
+  readonly recordId: string;
   readonly projectKey: string;
   readonly name: string;
   readonly status?: string;
@@ -16,10 +17,12 @@ export interface AuthoritativeProjectState {
   readonly phase?: string;
   readonly summary?: string;
   readonly updatedAt?: string;
+  readonly sourceEventId?: string;
   readonly correctedFields: readonly string[];
 }
 
 export interface AuthoritativeItemState {
+  readonly recordId: string;
   readonly itemKey: string;
   readonly title: string;
   readonly projectKey?: string;
@@ -33,12 +36,18 @@ export interface AuthoritativeItemState {
   readonly contingency?: string;
   readonly parked: boolean;
   readonly updatedAt?: string;
+  readonly sourceEventId?: string;
+  readonly inCurrentAttention?: boolean;
+  readonly attentionOrder?: number;
+  readonly attentionReason?: string;
   readonly correctedFields: readonly string[];
 }
 
 export interface AuthoritativeBitableReconciliation {
   readonly projects: readonly AuthoritativeProjectState[];
   readonly items: readonly AuthoritativeItemState[];
+  readonly currentProjects?: readonly AuthoritativeProjectState[];
+  readonly currentItems?: readonly AuthoritativeItemState[];
   readonly memoryCandidates: readonly MemoryCandidate[];
 }
 
@@ -78,11 +87,16 @@ const projectReadFields = [
   "project_key",
   ...authoritativeProjectFields,
   "最近更新",
+  "来源事件",
 ] as const;
 const itemReadFields = [
   "item_key",
   ...authoritativeItemFields,
   "最近更新",
+  "来源事件",
+  "当前注意力",
+  "注意力顺序",
+  "注意力依据",
 ] as const;
 
 function text(value: unknown): string | undefined {
@@ -195,6 +209,8 @@ export function createAuthoritativeBitableReader(
       const projectKeysByRecordId = new Map<string, string>();
       const projects: AuthoritativeProjectState[] = [];
       const items: AuthoritativeItemState[] = [];
+      const currentProjects: AuthoritativeProjectState[] = [];
+      const currentItems: AuthoritativeItemState[] = [];
       const memoryCandidates: MemoryCandidate[] = [];
 
       for (const record of projectRecords) {
@@ -258,17 +274,22 @@ export function createAuthoritativeBitableReader(
         const phase = selection(record.fields["阶段"]);
         const summary = text(record.fields["当前摘要"]);
         const updatedAt = text(record.fields["最近更新"]);
+        const sourceEventId = text(record.fields["来源事件"]);
+        const state: AuthoritativeProjectState = {
+          recordId: record.recordId,
+          projectKey,
+          name,
+          ...optional("status", status),
+          ...optional("goal", goal),
+          ...optional("phase", phase),
+          ...optional("summary", summary),
+          ...optional("updatedAt", updatedAt),
+          ...optional("sourceEventId", sourceEventId),
+          correctedFields: corrections,
+        };
+        currentProjects.push(state);
         if (corrections.length > 0) {
-          projects.push({
-            projectKey,
-            name,
-            ...optional("status", status),
-            ...optional("goal", goal),
-            ...optional("phase", phase),
-            ...optional("summary", summary),
-            ...optional("updatedAt", updatedAt),
-            correctedFields: corrections,
-          });
+          projects.push(state);
         }
       }
 
@@ -335,27 +356,46 @@ export function createAuthoritativeBitableReader(
         const checkpointAt = text(record.fields["检查点"]);
         const contingency = text(record.fields["条件/预案"]);
         const updatedAt = text(record.fields["最近更新"]);
+        const sourceEventId = text(record.fields["来源事件"]);
+        const attentionOrder =
+          typeof record.fields["注意力顺序"] === "number"
+            ? record.fields["注意力顺序"]
+            : undefined;
+        const attentionReason = text(record.fields["注意力依据"]);
+        const state: AuthoritativeItemState = {
+          recordId: record.recordId,
+          itemKey,
+          title,
+          ...optional("projectKey", projectKey),
+          ...optional("type", type),
+          ...optional("status", status),
+          ...optional("nextAction", nextAction),
+          ...optional("summary", summary),
+          ...optional("waitingFor", waitingFor),
+          ...optional("releaseCondition", releaseCondition),
+          ...optional("checkpointAt", checkpointAt),
+          ...optional("contingency", contingency),
+          parked: record.fields["稍后区"] === true,
+          ...optional("updatedAt", updatedAt),
+          ...optional("sourceEventId", sourceEventId),
+          inCurrentAttention: record.fields["当前注意力"] === true,
+          ...optional("attentionOrder", attentionOrder),
+          ...optional("attentionReason", attentionReason),
+          correctedFields: corrections,
+        };
+        currentItems.push(state);
         if (corrections.length > 0) {
-          items.push({
-            itemKey,
-            title,
-            ...optional("projectKey", projectKey),
-            ...optional("type", type),
-            ...optional("status", status),
-            ...optional("nextAction", nextAction),
-            ...optional("summary", summary),
-            ...optional("waitingFor", waitingFor),
-            ...optional("releaseCondition", releaseCondition),
-            ...optional("checkpointAt", checkpointAt),
-            ...optional("contingency", contingency),
-            parked: record.fields["稍后区"] === true,
-            ...optional("updatedAt", updatedAt),
-            correctedFields: corrections,
-          });
+          items.push(state);
         }
       }
 
-      return { projects, items, memoryCandidates };
+      return {
+        projects,
+        items,
+        currentProjects,
+        currentItems,
+        memoryCandidates,
+      };
     },
   };
 }
