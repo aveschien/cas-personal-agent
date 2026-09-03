@@ -51,7 +51,7 @@ npm run start:live
 
 进程会等待 `lark-cli` 的精确 ready 标记，并在收到 SIGTERM/SIGINT 后优雅关闭事件流、Pi 会话和 SQLite。systemd 模板位于 `deploy/cas-personal-agent.service`。
 
-当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动目前仅以干跑计划写入“行动同步”，不会真实创建滴答或飞书任务。
+当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动默认只写入“行动同步”；显式启用滴答后才会进入异步创建队列。飞书任务仍处于规划阶段。
 
 只验证真实 Pi SDK、受控工具和多轮上下文，不连接飞书：
 
@@ -134,6 +134,21 @@ set -a
 set +a
 npm run verify:memory
 ```
+
+## 个人行动与到期提醒
+
+明确的个人行动、deadline、时间安排开始和等待检查点会分别生成独立的 Action Link 与一次性 Reminder。Reminder 使用 SQLite 持久化，以绝对时间轴判断是否到期；业务时间始终是 `Asia/Shanghai`，不会受 VPS 时区影响。到点后 Bot 发送一条与该事项相关的 Markdown 私聊，失败使用稳定幂等键进行有界重试，服务重启后继续。
+
+滴答写入默认关闭。准备好个人 API Token 和目标清单 ID 后，在 `.env` 中显式配置：
+
+```bash
+TICKTICK_ENABLED=true
+TICKTICK_API_TOKEN=replace_with_personal_api_token
+TICKTICK_PROJECT_ID=replace_with_project_id
+TICKTICK_BASE_URL=https://api.ticktick.com/open/v1
+```
+
+中国区滴答账户使用 `https://api.dida365.com/open/v1`。创建任务前 Adapter 会在目标清单内检查稳定幂等标记；进程在外部创建后、Bitable 回写前中断，也不会因此重复创建任务。外部对象 ID、最新状态和同步时间会回写“行动同步”。
 
 ## 验证
 

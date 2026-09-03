@@ -18,6 +18,10 @@ export interface LiveEnvironment {
   readonly HINDSIGHT_RECALL_TIMEOUT_MS?: string;
   readonly HINDSIGHT_RECALL_MAX_RESULTS?: string;
   readonly HINDSIGHT_RECALL_MAX_TOKENS?: string;
+  readonly TICKTICK_ENABLED?: string;
+  readonly TICKTICK_API_TOKEN?: string;
+  readonly TICKTICK_PROJECT_ID?: string;
+  readonly TICKTICK_BASE_URL?: string;
 }
 
 function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
@@ -45,7 +49,11 @@ function parseAllowlist(value: string | undefined): string[] {
   return userIds;
 }
 
-function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+function parseBoolean(
+  value: string | undefined,
+  defaultValue: boolean,
+  name: string,
+): boolean {
   if (value === undefined || value.trim().length === 0) {
     return defaultValue;
   }
@@ -55,7 +63,7 @@ function parseBoolean(value: string | undefined, defaultValue: boolean): boolean
   if (value === "false") {
     return false;
   }
-  throw new Error("MEMORY_ENABLED must be true or false");
+  throw new Error(`${name} must be true or false`);
 }
 
 function positiveInteger(
@@ -85,6 +93,21 @@ function hindsightBaseUrl(value: string | undefined): string {
   return url.toString().replace(/\/$/, "");
 }
 
+function tickTickBaseUrl(value: string | undefined): string {
+  const url = new URL(
+    value?.trim() || "https://api.ticktick.com/open/v1",
+  );
+  if (
+    url.protocol !== "https:" ||
+    !["api.ticktick.com", "api.dida365.com"].includes(url.hostname)
+  ) {
+    throw new Error(
+      "TICKTICK_BASE_URL must use the official TickTick or Dida365 HTTPS API host",
+    );
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
 export function loadLiveConfig(
   environment: LiveEnvironment,
   cwd: string,
@@ -93,7 +116,16 @@ export function loadLiveConfig(
   if (!/^[^/]+\/[^/]+$/.test(piModel)) {
     throw new Error("CAS_PI_MODEL must use provider/model format");
   }
-  const memoryEnabled = parseBoolean(environment.MEMORY_ENABLED, true);
+  const memoryEnabled = parseBoolean(
+    environment.MEMORY_ENABLED,
+    true,
+    "MEMORY_ENABLED",
+  );
+  const tickTickEnabled = parseBoolean(
+    environment.TICKTICK_ENABLED,
+    false,
+    "TICKTICK_ENABLED",
+  );
   const bankId = environment.HINDSIGHT_BANK_ID?.trim() || "cas-personal-agent";
   if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(bankId)) {
     throw new Error("HINDSIGHT_BANK_ID must be a stable lowercase key");
@@ -140,5 +172,13 @@ export function loadLiveConfig(
         "HINDSIGHT_RECALL_MAX_TOKENS",
       ),
     },
+    personalActions: tickTickEnabled
+      ? {
+          enabled: true,
+          apiToken: required(environment, "TICKTICK_API_TOKEN"),
+          projectId: required(environment, "TICKTICK_PROJECT_ID"),
+          baseUrl: tickTickBaseUrl(environment.TICKTICK_BASE_URL),
+        }
+      : { enabled: false },
   };
 }

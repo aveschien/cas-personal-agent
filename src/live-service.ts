@@ -1,3 +1,6 @@
+import { createActionOutbox } from "./action-outbox.js";
+import { createActionWorker } from "./action-worker.js";
+import type { PersonalActionAdapter } from "./action.js";
 import { createDevelopmentAgent } from "./development-agent.js";
 import {
   createBitableStateProjector,
@@ -16,8 +19,10 @@ import {
 } from "./lark-event-channel.js";
 import {
   createLarkReplyAdapter,
+  processCommandRunner,
   type ReplyAdapter,
 } from "./lark-reply-adapter.js";
+import { createLarkReminderNotifier } from "./lark-reminder-notifier.js";
 import {
   createPiInterpreter,
   type PiConversationRuntime,
@@ -26,8 +31,13 @@ import { createPiSdkRuntime } from "./pi-sdk-runtime.js";
 import { createPiSessionRegistry } from "./pi-session-registry.js";
 import { createProjectionRepairWorker } from "./projection-repair-worker.js";
 import { createReminderStore } from "./reminder-store.js";
+import {
+  createReminderWorker,
+  type ReminderNotifier,
+} from "./reminder-worker.js";
 import { isSemanticOperation } from "./state-operations.js";
 import { createSupervisor } from "./supervisor.js";
+import { createTickTickActionAdapter } from "./ticktick-action-adapter.js";
 
 export interface LiveServiceConfig {
   readonly cwd: string;
@@ -45,6 +55,14 @@ export interface LiveServiceConfig {
     readonly recallMaxResults: number;
     readonly recallMaxTokens: number;
   };
+  readonly personalActions?:
+    | { readonly enabled: false }
+    | {
+        readonly enabled: true;
+        readonly apiToken: string;
+        readonly projectId: string;
+        readonly baseUrl: string;
+      };
 }
 
 export interface LiveService {
@@ -58,6 +76,7 @@ export interface RuntimeFactoryInput {
   readonly sessionDirectory: string;
   readonly modelName: string;
   readonly memoryEnabled: boolean;
+  readonly personalActionsEnabled: boolean;
 }
 
 export interface LiveServiceDependencies {
@@ -70,6 +89,8 @@ export interface LiveServiceDependencies {
   readonly onError?: (error: unknown) => void;
   readonly stateProjector?: BitableStateProjector;
   readonly memoryAdapter?: MemoryAdapter;
+  readonly personalActionAdapter?: PersonalActionAdapter;
+  readonly reminderNotifier?: ReminderNotifier;
 }
 
 export async function createLiveService(
@@ -86,6 +107,7 @@ export async function createLiveService(
       sessionDirectory: config.piSessionDirectory,
       modelName: config.piModel,
       memoryEnabled: config.memory.enabled,
+      personalActionsEnabled: config.personalActions?.enabled === true,
     });
   } catch (error) {
     registry.close();
@@ -111,16 +133,24 @@ export async function createLiveService(
     onMemoryError: onError,
     ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
   });
-  const reminderStore =
-    dependencies.stateProjector === undefined
-      ? createReminderStore(config.databasePath)
+  const ownsStateProjector = dependencies.stateProjector === undefined;
+  const reminderStore = ownsStateProjector
+    ? createReminderStore(config.databasePath)
+    : undefined;
+  const actionOutbox =
+    ownsStateProjector && config.personalActions?.enabled === true
+      ? createActionOutbox(config.databasePath)
       : undefined;
+  const bitableClient = ownsStateProjector
+    ? createLarkBaseClient({ baseToken: config.bitableBaseToken })
+    : undefined;
   const stateProjector =
     dependencies.stateProjector ??
     createBitableStateProjector({
-      client: createLarkBaseClient({ baseToken: config.bitableBaseToken }),
+      client: bitableClient!,
       tables: config.bitableTables,
       reminders: reminderStore!,
+      ...(actionOutbox === undefined ? {} : { actions: actionOutbox }),
     });
   const agent = createDevelopmentAgent({
     databasePath: config.databasePath,
@@ -151,6 +181,35 @@ export async function createLiveService(
           databasePath: config.databasePath,
           memory,
         });
+  const reminderWorker =
+    reminderStore === undefined
+      ? undefined
+      : createReminderWorker({
+          databasePath: config.databasePath,
+          notifier:
+            dependencies.reminderNotifier ??
+            createLarkReminderNotifier({
+              userId: config.allowedUserIds[0]!,
+              runner: processCommandRunner,
+            }),
+        });
+  const actionWorker =
+    actionOutbox === undefined ||
+    bitableClient === undefined ||
+    config.personalActions?.enabled !== true
+      ? undefined
+      : createActionWorker({
+          databasePath: config.databasePath,
+          actions:
+            dependencies.personalActionAdapter ??
+            createTickTickActionAdapter({
+              apiToken: config.personalActions.apiToken,
+              projectId: config.personalActions.projectId,
+              baseUrl: config.personalActions.baseUrl,
+            }),
+          bitable: bitableClient,
+          actionLinksTableId: config.bitableTables.actionLinks,
+        });
   const channel = dependencies.channel ?? createLarkEventChannel();
   const supervisor = createSupervisor({
     channel,
@@ -173,6 +232,20 @@ export async function createLiveService(
         if (memoryWorker !== undefined) {
           for (let count = 0; count < 10; count += 1) {
             if (!(await memoryWorker.runOnce())) {
+              break;
+            }
+          }
+        }
+        if (actionWorker !== undefined) {
+          for (let count = 0; count < 10; count += 1) {
+            if (!(await actionWorker.runOnce())) {
+              break;
+            }
+          }
+        }
+        if (reminderWorker !== undefined) {
+          for (let count = 0; count < 10; count += 1) {
+            if (!(await reminderWorker.runOnce())) {
               break;
             }
           }
@@ -217,8 +290,11 @@ export async function createLiveService(
         agent.close();
         registry.close();
         reminderStore?.close();
+        actionOutbox?.close();
         repairWorker.close();
         memoryWorker?.close();
+        actionWorker?.close();
+        reminderWorker?.close();
       }
     },
   };

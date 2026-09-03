@@ -131,7 +131,7 @@ test("typed state operations upsert linked Bitable records idempotently", async 
     idempotency_key: "om_projection_1:proposal-follow-up",
     来源事件: "om_projection_1",
   });
-  assert.equal(reminders.size, 1);
+  assert.equal(reminders.size, 2);
 
   await projector.project({
     sourceEventId: "om_projection_2",

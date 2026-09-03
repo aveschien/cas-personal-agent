@@ -40,6 +40,7 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
         recallMaxResults: 5,
         recallMaxTokens: 800,
       },
+      personalActions: { enabled: false },
     },
   );
 
@@ -60,5 +61,54 @@ test("live config rejects malformed Pi model identifiers", () => {
         "/srv/cas-personal-agent",
       ),
     /CAS_PI_MODEL must use provider\/model format/,
+  );
+});
+
+test("TickTick writes require an explicit enable flag and credentials", () => {
+  const common = {
+    CAS_ALLOWED_USER_IDS: "ou_one",
+    CAS_BITABLE_BASE_TOKEN: "bas_state",
+    CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+    CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+    CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+  };
+  assert.throws(
+    () =>
+      loadLiveConfig(
+        { ...common, TICKTICK_ENABLED: "true" },
+        "/srv/cas-personal-agent",
+      ),
+    /TICKTICK_API_TOKEN is required/,
+  );
+  assert.deepEqual(
+    loadLiveConfig(
+      {
+        ...common,
+        TICKTICK_ENABLED: "true",
+        TICKTICK_API_TOKEN: "secret-token",
+        TICKTICK_PROJECT_ID: "project-1",
+      },
+      "/srv/cas-personal-agent",
+    ).personalActions,
+    {
+      enabled: true,
+      apiToken: "secret-token",
+      projectId: "project-1",
+      baseUrl: "https://api.ticktick.com/open/v1",
+    },
+  );
+  assert.throws(
+    () =>
+      loadLiveConfig(
+        {
+          ...common,
+          TICKTICK_ENABLED: "true",
+          TICKTICK_API_TOKEN: "secret-token",
+          TICKTICK_PROJECT_ID: "project-1",
+          TICKTICK_BASE_URL: "https://example.com/open/v1",
+        },
+        "/srv/cas-personal-agent",
+      ),
+    /official TickTick or Dida365/,
   );
 });

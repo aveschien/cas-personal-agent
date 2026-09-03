@@ -162,10 +162,17 @@ export interface ActionLinkProjection {
   readonly sourceEventId: string;
 }
 
-export interface CheckpointProjection {
+export type ReminderKind = "checkpoint" | "deadline" | "scheduled_event";
+
+export interface ReminderProjection {
   readonly key: string;
   readonly itemKey: string;
+  readonly projectKey?: string;
+  readonly title: string;
+  readonly context?: string;
+  readonly suggestedAction?: string;
   readonly fireAt: string;
+  readonly kind: ReminderKind;
   readonly sourceEventId: string;
 }
 
@@ -173,7 +180,7 @@ export interface BitableProjectionPlan {
   readonly projects: readonly ProjectProjection[];
   readonly items: readonly ItemProjection[];
   readonly actionLinks: readonly ActionLinkProjection[];
-  readonly checkpoints: readonly CheckpointProjection[];
+  readonly reminders: readonly ReminderProjection[];
   readonly clarifications: readonly ClarifyOperation[];
 }
 
@@ -204,8 +211,33 @@ export function compileBitableProjection(
   const projects = new Map<string, ProjectProjection>();
   const items = new Map<string, ItemProjection>();
   const actionLinks: ActionLinkProjection[] = [];
-  const checkpoints: CheckpointProjection[] = [];
+  const reminders = new Map<string, ReminderProjection>();
   const clarifications: ClarifyOperation[] = [];
+
+  const addReminder = (reminder: ReminderProjection): void => {
+    const existing = reminders.get(reminder.key);
+    if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(reminder)) {
+      throw new Error(`Reminder key ${reminder.key} has conflicting definitions`);
+    }
+    reminders.set(reminder.key, reminder);
+  };
+
+  const waitingReminderDetails = (
+    item: ItemProjection | undefined,
+  ): Pick<ReminderProjection, "context" | "suggestedAction"> | undefined => {
+    if (item === undefined || item.waitingFor === undefined) {
+      return undefined;
+    }
+    return {
+      context: `在等：${item.waitingFor}${
+        item.releaseCondition === undefined
+          ? ""
+          : `；解除条件：${item.releaseCondition}`
+      }`,
+      suggestedAction:
+        item.contingency ?? "确认等待结果是否已经出现。",
+    };
+  };
 
   for (const operation of input.operations) {
     switch (operation.kind) {
@@ -292,6 +324,19 @@ export function compileBitableProjection(
           syncStatus: "pending",
           sourceEventId: input.sourceEventId,
         } as ActionLinkProjection);
+        if (deadlineAt !== undefined) {
+          addReminder({
+            key: `${operation.actionKey}-deadline`,
+            itemKey: operation.itemKey,
+            ...optional(operation.projectKey, "projectKey"),
+            title: operation.title,
+            context: `截止时间：${deadlineAt}`,
+            suggestedAction: "确认是否完成；如果未完成，决定新的下一步。",
+            fireAt: deadlineAt,
+            kind: "deadline",
+            sourceEventId: input.sourceEventId,
+          } as ReminderProjection);
+        }
         break;
       }
       case "create_scheduled_event": {
@@ -314,16 +359,34 @@ export function compileBitableProjection(
           syncStatus: "pending",
           sourceEventId: input.sourceEventId,
         } as ActionLinkProjection);
+        addReminder({
+          key: `${operation.actionKey}-scheduled-event`,
+          itemKey: operation.itemKey,
+          ...optional(operation.projectKey, "projectKey"),
+          title: operation.title,
+          context: `时间：${startAt} 至 ${endAt}`,
+          suggestedAction: "准备进入该时间安排。",
+          fireAt: startAt,
+          kind: "scheduled_event",
+          sourceEventId: input.sourceEventId,
+        } as ReminderProjection);
         break;
       }
       case "schedule_checkpoint": {
         assertKey(operation.reminderKey, "reminderKey");
         assertKey(operation.itemKey, "itemKey");
         const fireAt = normalizeBusinessTimestamp(operation.fireAt, "fireAt");
-        checkpoints.push({
+        const item = items.get(operation.itemKey);
+        addReminder({
           key: operation.reminderKey,
           itemKey: operation.itemKey,
+          ...(item?.projectKey === undefined
+            ? {}
+            : { projectKey: item.projectKey }),
+          title: item?.title ?? operation.itemKey,
+          ...(waitingReminderDetails(item) ?? {}),
           fireAt,
+          kind: "checkpoint",
           sourceEventId: input.sourceEventId,
         });
         break;
@@ -337,16 +400,21 @@ export function compileBitableProjection(
   for (const item of items.values()) {
     if (
       item.checkpointAt !== undefined &&
-      !checkpoints.some(
-        (checkpoint) =>
-          checkpoint.itemKey === item.key &&
-          checkpoint.fireAt === item.checkpointAt,
+      ![...reminders.values()].some(
+        (reminder) =>
+          reminder.kind === "checkpoint" &&
+          reminder.itemKey === item.key &&
+          reminder.fireAt === item.checkpointAt,
       )
     ) {
-      checkpoints.push({
+      addReminder({
         key: `${item.key}-checkpoint`,
         itemKey: item.key,
+        ...optional(item.projectKey, "projectKey"),
+        title: item.title,
+        ...(waitingReminderDetails(item) ?? {}),
         fireAt: item.checkpointAt,
+        kind: "checkpoint",
         sourceEventId: input.sourceEventId,
       });
     }
@@ -356,7 +424,7 @@ export function compileBitableProjection(
     projects: [...projects.values()],
     items: [...items.values()],
     actionLinks,
-    checkpoints,
+    reminders: [...reminders.values()],
     clarifications,
   };
 }

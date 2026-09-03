@@ -25,7 +25,7 @@ export interface LarkReplyAdapterOptions {
   readonly runner?: CommandRunner;
 }
 
-const processRunner: CommandRunner = {
+export const processCommandRunner: CommandRunner = {
   run(command, args) {
     return new Promise((resolve, reject) => {
       const child = spawn(command, [...args], {
@@ -57,7 +57,7 @@ export function createLarkReplyAdapter(
   options: LarkReplyAdapterOptions = {},
 ): ReplyAdapter {
   const command = options.command ?? "lark-cli";
-  const runner = options.runner ?? processRunner;
+  const runner = options.runner ?? processCommandRunner;
 
   return {
     async reply(request) {

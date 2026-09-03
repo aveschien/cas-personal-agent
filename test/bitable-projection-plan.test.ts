@@ -105,11 +105,25 @@ test("mixed semantic operations compile into separate waiting, action, idea, and
           sourceEventId: "om_mixed_1",
         },
       ],
-      checkpoints: [
+      reminders: [
+        {
+          key: "pathology-slide-tonight-deadline",
+          itemKey: "pathology-slide",
+          title: "今晚修改病理 PPT 页",
+          context: "截止时间：2026-09-02T23:59:00+08:00",
+          suggestedAction: "确认是否完成；如果未完成，决定新的下一步。",
+          fireAt: "2026-09-02T23:59:00+08:00",
+          kind: "deadline",
+          sourceEventId: "om_mixed_1",
+        },
         {
           key: "proposal-feedback-2026-09-04",
           itemKey: "proposal-feedback",
+          title: "方案反馈",
+          context: "在等：张总的方案反馈；解除条件：收到张总反馈",
+          suggestedAction: "若周五仍无反馈，则联系张总",
           fireAt: "2026-09-04T09:00:00+08:00",
+          kind: "checkpoint",
           sourceEventId: "om_mixed_1",
         },
       ],
@@ -162,5 +176,40 @@ test("fixed-time events, deadlines, and checkpoints remain distinct", () => {
   });
   assert.equal(plan.actionLinks[1]?.deadlineAt, "2026-09-03T23:59:00+08:00");
   assert.equal(plan.actionLinks[1]?.startAt, undefined);
-  assert.equal(plan.checkpoints[0]?.fireAt, "2026-09-04T09:00:00+08:00");
+  assert.deepEqual(
+    plan.reminders.map(({ kind, fireAt }) => ({ kind, fireAt })),
+    [
+      {
+        kind: "scheduled_event",
+        fireAt: "2026-09-03T15:00:00+08:00",
+      },
+      { kind: "deadline", fireAt: "2026-09-03T23:59:00+08:00" },
+      { kind: "checkpoint", fireAt: "2026-09-04T09:00:00+08:00" },
+    ],
+  );
+});
+
+test("missing or vague times never manufacture a Reminder", () => {
+  const plan = compileBitableProjection({
+    sourceEventId: "om_without_time",
+    operations: [
+      {
+        kind: "upsert_item",
+        itemKey: "undated-action",
+        title: "整理方案",
+        type: "task",
+        status: "actionable",
+        nextAction: "打开方案文档",
+      },
+      {
+        kind: "plan_action",
+        actionKey: "undated-action",
+        itemKey: "undated-action",
+        title: "整理方案",
+        actionType: "personal_action",
+        factOwner: "ticktick",
+      },
+    ],
+  });
+  assert.deepEqual(plan.reminders, []);
 });

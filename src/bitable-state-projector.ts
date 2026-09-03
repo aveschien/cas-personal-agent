@@ -1,11 +1,12 @@
 import {
   compileBitableProjection,
+  type ActionLinkProjection,
   type ActionFactOwner,
   type ActionType,
-  type CheckpointProjection,
   type CompileBitableProjectionInput,
   type ItemProjection,
   type ProjectProjection,
+  type ReminderProjection,
 } from "./state-operations.js";
 
 export interface BitableRecord {
@@ -34,8 +35,18 @@ export interface BitableRecordClient {
 
 export interface ReminderProjectionSink {
   schedule(
-    checkpoint: CheckpointProjection,
+    reminder: ReminderProjection,
     itemRecordId: string,
+    projectRecordId?: string,
+  ): Promise<void>;
+}
+
+export interface ActionProjectionSink {
+  schedule(
+    action: ActionLinkProjection,
+    actionLinkRecordId: string,
+    itemRecordId: string,
+    projectRecordId?: string,
   ): Promise<void>;
 }
 
@@ -49,6 +60,7 @@ export interface BitableStateProjectorOptions {
   readonly client: BitableRecordClient;
   readonly tables: BitableTables;
   readonly reminders: ReminderProjectionSink;
+  readonly actions?: ActionProjectionSink;
 }
 
 export interface BitableStateProjector {
@@ -276,7 +288,7 @@ export function createBitableStateProjector(
           idempotency_key: `${action.sourceEventId}:${action.key}`,
           来源事件: action.sourceEventId,
         };
-        await upsert(
+        const actionRecord = await upsert(
           options.client,
           options.tables.actionLinks,
           "action_key",
@@ -284,12 +296,19 @@ export function createBitableStateProjector(
           fields,
           clearedActionFields,
         );
+        await options.actions?.schedule(
+          action,
+          actionRecord.recordId,
+          itemRecordId,
+          projectRecordId,
+        );
       }
 
-      for (const checkpoint of plan.checkpoints) {
+      for (const reminder of plan.reminders) {
         await options.reminders.schedule(
-          checkpoint,
-          await resolveItem(checkpoint.itemKey),
+          reminder,
+          await resolveItem(reminder.itemKey),
+          await resolveProject(reminder.projectKey),
         );
       }
     },

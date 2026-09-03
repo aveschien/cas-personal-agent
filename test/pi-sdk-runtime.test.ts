@@ -121,3 +121,31 @@ test("memory-enabled Pi can propose a selected durable memory", async () => {
     runtime.dispose();
   }
 });
+
+test("Pi distinguishes queued TickTick sync from a completed external write", async () => {
+  let systemPrompt = "";
+  const runtime = await createPiSdkRuntime({
+    cwd: "/srv/cas-agent",
+    sessionDirectory: "/srv/cas-agent/var/pi-sessions",
+    modelName: "openai-codex/gpt-5.6-luna",
+    personalActionsEnabled: true,
+    sdkFactory: {
+      create: async (input) => {
+        systemPrompt = input.systemPrompt;
+        return {
+          sessionId: "pi-actions-enabled",
+          sessionPath: join(input.sessionDirectory, "pi-actions.jsonl"),
+          subscribeText: () => () => undefined,
+          prompt: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    },
+  });
+  try {
+    assert.match(systemPrompt, /已安排同步/);
+    assert.match(systemPrompt, /不得.*创建成功/);
+  } finally {
+    runtime.dispose();
+  }
+});

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -20,13 +21,16 @@ function required(name: string): string {
 }
 
 export async function runMixedInputSmoke(cwd = process.cwd()): Promise<void> {
+  const runtimeDirectory = join(cwd, "var");
+  await mkdir(runtimeDirectory, { recursive: true });
+  const smokeDirectory = await mkdtemp(join(runtimeDirectory, "mixed-smoke-"));
   const runtime = await createPiSdkRuntime({
     cwd,
-    sessionDirectory: join(cwd, "var", "pi-mixed-smoke-v3"),
+    sessionDirectory: join(smokeDirectory, "pi-sessions"),
     modelName: process.env.CAS_PI_MODEL ?? "openai-codex/gpt-5.6-luna",
   });
   const reminders = createReminderStore(
-    join(cwd, "var", "mixed-smoke.sqlite"),
+    join(smokeDirectory, "events.sqlite"),
   );
   const projector = createBitableStateProjector({
     client: createLarkBaseClient({
@@ -67,7 +71,7 @@ export async function runMixedInputSmoke(cwd = process.cwd()): Promise<void> {
       sourceEventId: "dev-pi-mixed-001",
       operations,
     });
-    assert.equal(plan.checkpoints.length, 1);
+    assert.equal(plan.reminders.length, 2);
     assert.equal(
       plan.actionLinks.find(
         (action) => action.actionType === "personal_action",
@@ -117,6 +121,7 @@ export async function runMixedInputSmoke(cwd = process.cwd()): Promise<void> {
   } finally {
     runtime.dispose();
     reminders.close();
+    await rm(smokeDirectory, { recursive: true, force: true });
   }
 }
 
