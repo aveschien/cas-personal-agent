@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const schemaVersion = 1;
+const schemaVersion = 2;
 const requiredTables = [
   "events",
   "focus_state",
+  "message_inbox",
   "outbox",
   "pi_sessions",
   "reminders",
@@ -105,6 +106,26 @@ export function initializeStorage(database: DatabaseSync): void {
       last_confirmed_at TEXT,
       parking_lot_count INTEGER NOT NULL DEFAULT 0
     ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS message_inbox (
+      source_message_id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      chat_type TEXT NOT NULL CHECK (chat_type IN ('p2p', 'group')),
+      message_type TEXT NOT NULL,
+      sender_type TEXT NOT NULL CHECK (sender_type IN ('user', 'bot')),
+      raw_text TEXT NOT NULL,
+      raw_payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('pending', 'processing', 'completed', 'failed')
+      ),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS message_inbox_pending_idx
+      ON message_inbox (status, received_at);
 
     CREATE TABLE IF NOT EXISTS outbox (
       id TEXT PRIMARY KEY,

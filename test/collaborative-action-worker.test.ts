@@ -9,7 +9,7 @@ import { createCollaborativeActionOutbox } from "../src/collaborative-action-out
 import { createCollaborativeActionWorker } from "../src/collaborative-action-worker.js";
 import type { ActionLinkProjection } from "../src/state-operations.js";
 
-test("a confirmed collaborative commitment is created once and linked back", async () => {
+test("a resolved collaborative commitment is created once and linked back", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cas-collaborative-action-"));
   const databasePath = join(directory, "events.sqlite");
   const outbox = createCollaborativeActionOutbox(databasePath);
@@ -22,7 +22,6 @@ test("a confirmed collaborative commitment is created once and linked back", asy
     factOwner: "feishu_task",
     assignee: "小王",
     assigneeId: "ou_xiaowang",
-    confirmed: true,
     deadlineAt: "2026-09-04T17:00:00+08:00",
     syncStatus: "pending",
     sourceEventId: "om_collaborative_1",
@@ -95,28 +94,27 @@ test("a confirmed collaborative commitment is created once and linked back", asy
   }
 });
 
-test("an unconfirmed collaborative commitment never reaches the outbox", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "cas-unconfirmed-action-"));
+test("an unresolved collaborative commitment never reaches the outbox", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-unresolved-action-"));
   const databasePath = join(directory, "events.sqlite");
   const outbox = createCollaborativeActionOutbox(databasePath);
   try {
     await assert.rejects(
       outbox.schedule(
         {
-          key: "unconfirmed",
-          itemKey: "unconfirmed-item",
+          key: "unresolved",
+          itemKey: "unresolved-item",
           title: "不要创建",
           actionType: "collaborative_commitment",
           factOwner: "feishu_task",
           assignee: "小王",
-          assigneeId: "ou_xiaowang",
           syncStatus: "pending",
-          sourceEventId: "om_unconfirmed",
+          sourceEventId: "om_unresolved",
         },
         "rec_action",
         "rec_item",
       ),
-      /explicit confirmation/,
+      /uniquely resolved assignee/,
     );
     const database = new DatabaseSync(databasePath);
     try {

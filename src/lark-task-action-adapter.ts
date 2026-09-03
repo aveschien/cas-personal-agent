@@ -46,7 +46,7 @@ function idempotencyToken(value: string): string {
 
 function description(request: CreateCollaborativeActionRequest): string {
   return [
-    "由 CAS Personal Agent 根据用户明确确认创建。",
+    "由 CAS Personal Agent 根据用户明确行动指令创建。",
     `事项：${request.itemKey}`,
     ...(request.projectKey === undefined
       ? []

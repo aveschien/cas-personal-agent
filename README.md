@@ -1,6 +1,6 @@
 # CAS Personal Agent
 
-单用户、私有部署的个人工作管理 Agent。开发入口提供确定性 NDJSON 闭环；真实入口通过受管的 `lark-cli` Event Channel 接收飞书私聊，由持久化 Pi SDK 会话解释消息，并用 `lark-cli` 回复。所有原始 Event 会先写入 SQLite，再通过类型化语义操作投影到飞书多维表格。
+单用户、私有部署的个人工作管理 Agent。开发入口提供确定性 NDJSON 闭环；真实入口通过受管的 `lark-cli` Event Channel 接收飞书私聊，由使用 `openai-codex/gpt-5.6-luna`、`max` 推理强度的持久化 Pi SDK 会话解释消息，并用 `lark-cli` 回复。所有原始 Event 会先写入 SQLite，再通过类型化语义操作投影到飞书多维表格。
 
 所有用户表达和 Agent 生成的业务时间固定按 `Asia/Shanghai`（北京时间）解释与写入，不依赖 VPS 的系统时区。原始 Event 的接收时间仍以 UTC 保存，作为排序和幂等的机器时间。
 
@@ -51,7 +51,9 @@ npm run start:live
 
 进程会等待 `lark-cli` 的精确 ready 标记，并在收到 SIGTERM/SIGINT 后优雅关闭事件流、Pi 会话和 SQLite。systemd 模板位于 `deploy/cas-personal-agent.service`。
 
-当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动默认只写入“行动同步”；显式启用滴答后才会进入异步创建队列。协同承诺同样默认只规划，显式启用飞书任务后才允许只读解析负责人，并在用户明确确认后进入可靠创建队列。
+当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动默认只写入“行动同步”；显式启用滴答后会直接进入异步创建队列，无需二次确认。协同承诺同样默认只规划；显式启用飞书任务后，负责人唯一解析成功的明确行动会直接进入可靠创建队列。
+
+真实飞书入口默认启用消息聚合：每条原始消息先持久化；连续消息在最后一条之后静默 8 秒再合并为一个 Pi 回合，最迟等待 30 秒。文字和随后发送的图片会作为同一批输入，只回复一次。需要立刻处理时，在新消息开头发送 `立即回答`、`现在回答`、`马上回答` 或 `/now`；指令后也可以继续跟正文。
 
 只验证真实 Pi SDK、受控工具和多轮上下文，不连接飞书：
 
@@ -158,7 +160,7 @@ TICKTICK_BASE_URL=https://api.ticktick.com/open/v1
 FEISHU_TASK_ENABLED=true
 ```
 
-启用后，Pi 只有一个额外的只读通讯录解析工具。负责人必须唯一解析为飞书 `open_id`；零结果或同名多结果只会要求澄清。协同承诺首次出现时不会写入，Bot 会给出 `确认创建协同任务 <actionKey>`；只有用户下一回合原样确认后，确定性投影层和 outbox 的多重门禁才允许通过 `lark-cli task +create --as user` 创建。同回合由模型自称“已确认”无法绕过门禁。稳定 client token、审计载荷、有界重试和重启恢复防止重复任务；成功后任务 GUID、链接、状态和同步时间回写“行动同步”。
+启用后，Pi 只有一个额外的只读通讯录解析工具。负责人必须唯一解析为飞书 `open_id`；零结果或同名多结果只会要求澄清。对于明确的协同任务指令，确定性投影层会直接允许 `lark-cli task +create --as user` 创建，不再要求用户下一回合确认；普通陈述、转述、想法和未触发预案仍不会创建。稳定 client token、审计载荷、有界重试和重启恢复防止重复任务；成功后任务 GUID、链接、状态和同步时间回写“行动同步”。
 
 ## 验证
 

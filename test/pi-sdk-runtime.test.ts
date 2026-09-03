@@ -13,6 +13,7 @@ test("the Pi SDK runtime exposes only the controlled semantic operation tool", a
   let listener: ((delta: string) => void) | undefined;
   let disposed = false;
   const prompts: string[] = [];
+  const promptImages: unknown[] = [];
   const runtime = await createPiSdkRuntime({
     cwd: "/srv/cas-agent",
     sessionDirectory: "/srv/cas-agent/var/pi-sessions",
@@ -29,8 +30,9 @@ test("the Pi SDK runtime exposes only the controlled semantic operation tool", a
               listener = undefined;
             };
           },
-          prompt: async (prompt) => {
+          prompt: async (prompt, images) => {
             prompts.push(prompt);
+            promptImages.push(images);
             input.proposeOperation({
               kind: "upsert_item",
               itemKey: `item-${prompts.length}`,
@@ -50,12 +52,29 @@ test("the Pi SDK runtime exposes only the controlled semantic operation tool", a
   });
 
   const first = await runtime.runTurn("修改报价页");
-  const second = await runtime.runTurn("继续刚才的事项");
+  const second = await runtime.runTurn("继续刚才的事项", [
+    {
+      type: "image",
+      data: "iVBORw0KGgo=",
+      mimeType: "image/png",
+    },
+  ]);
 
   assert.deepEqual(factoryInput?.enabledToolNames, ["state_apply_operation"]);
   assert.equal(factoryInput?.disableBuiltinTools, true);
+  assert.equal(factoryInput?.thinkingLevel, "max");
   assert.match(factoryInput?.systemPrompt ?? "", /不得使用 shell/);
   assert.deepEqual(prompts, ["修改报价页", "继续刚才的事项"]);
+  assert.deepEqual(promptImages, [
+    undefined,
+    [
+      {
+        type: "image",
+        data: "iVBORw0KGgo=",
+        mimeType: "image/png",
+      },
+    ],
+  ]);
   assert.deepEqual(first, {
     changes: [
       {

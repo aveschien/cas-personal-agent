@@ -32,10 +32,16 @@ import {
 import { createLarkReminderNotifier } from "./lark-reminder-notifier.js";
 import { createLarkTaskActionAdapter } from "./lark-task-action-adapter.js";
 import {
+  createLarkMessageImageLoader,
+  type MessageImageLoader,
+} from "./lark-message-images.js";
+import { createMessageBatcher } from "./message-batcher.js";
+import {
   createPiInterpreter,
   type PiConversationRuntime,
 } from "./pi-interpreter.js";
 import { createPiSdkRuntime } from "./pi-sdk-runtime.js";
+import type { PiThinkingLevel } from "./pi-sdk-runtime.js";
 import { createPiSessionRegistry } from "./pi-session-registry.js";
 import { createProjectionRepairWorker } from "./projection-repair-worker.js";
 import { createReminderStore } from "./reminder-store.js";
@@ -43,10 +49,7 @@ import {
   createReminderWorker,
   type ReminderNotifier,
 } from "./reminder-worker.js";
-import {
-  assertCollaborativeConfirmations,
-  isSemanticOperation,
-} from "./state-operations.js";
+import { isSemanticOperation } from "./state-operations.js";
 import { createSupervisor } from "./supervisor.js";
 import { createTickTickActionAdapter } from "./ticktick-action-adapter.js";
 
@@ -56,6 +59,7 @@ export interface LiveServiceConfig {
   readonly allowedUserIds: readonly string[];
   readonly piSessionDirectory: string;
   readonly piModel: string;
+  readonly piThinkingLevel?: PiThinkingLevel;
   readonly bitableBaseToken: string;
   readonly bitableTables: BitableTables;
   readonly memory: {
@@ -75,6 +79,11 @@ export interface LiveServiceConfig {
         readonly baseUrl: string;
       };
   readonly collaborativeActions?: { readonly enabled: boolean };
+  readonly messageBatching?: {
+    readonly enabled: boolean;
+    readonly settleMs: number;
+    readonly maxWaitMs: number;
+  };
 }
 
 export interface LiveService {
@@ -87,6 +96,7 @@ export interface RuntimeFactoryInput {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly modelName: string;
+  readonly thinkingLevel: PiThinkingLevel;
   readonly memoryEnabled: boolean;
   readonly personalActionsEnabled: boolean;
   readonly collaborativeActionsEnabled: boolean;
@@ -106,6 +116,7 @@ export interface LiveServiceDependencies {
   readonly personalActionAdapter?: PersonalActionAdapter;
   readonly collaborativeActionAdapter?: CollaborativeActionAdapter;
   readonly collaboratorResolver?: CollaboratorResolver;
+  readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
 }
 
@@ -127,6 +138,7 @@ export async function createLiveService(
       cwd: config.cwd,
       sessionDirectory: config.piSessionDirectory,
       modelName: config.piModel,
+      thinkingLevel: config.piThinkingLevel ?? "max",
       memoryEnabled: config.memory.enabled,
       personalActionsEnabled: config.personalActions?.enabled === true,
       collaborativeActionsEnabled,
@@ -212,7 +224,6 @@ export async function createLiveService(
         if (!changes.every(isSemanticOperation)) {
           throw new Error("Pi returned a non-semantic production state change");
         }
-        assertCollaborativeConfirmations(changes, context.rawUserText);
         await stateProjector.project({
           sourceEventId: context.sourceEventId,
           operations: changes,
@@ -274,10 +285,26 @@ export async function createLiveService(
           actionLinksTableId: config.bitableTables.actionLinks,
         });
   const channel = dependencies.channel ?? createLarkEventChannel();
+  const replies = dependencies.replies ?? createLarkReplyAdapter();
+  const batcher =
+    config.messageBatching?.enabled === true
+      ? createMessageBatcher({
+          databasePath: config.databasePath,
+          allowedUserIds: config.allowedUserIds,
+          agent,
+          replies,
+          images:
+            dependencies.messageImageLoader ?? createLarkMessageImageLoader(),
+          settleMs: config.messageBatching.settleMs,
+          maxWaitMs: config.messageBatching.maxWaitMs,
+          onError,
+        })
+      : undefined;
   const supervisor = createSupervisor({
     channel,
-    replies: dependencies.replies ?? createLarkReplyAdapter(),
+    replies,
     agent,
+    ...(batcher === undefined ? {} : { batcher }),
     onError,
   });
   let started = false;

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createLarkTaskActionAdapter } from "../src/lark-task-action-adapter.js";
 
-test("a confirmed collaborative commitment uses a stable Feishu client token", async () => {
+test("a resolved collaborative commitment uses a stable Feishu client token", async () => {
   const calls: readonly string[][] = [];
   const mutableCalls = calls as string[][];
   const adapter = createLarkTaskActionAdapter({
@@ -73,7 +73,7 @@ test("a confirmed collaborative commitment uses a stable Feishu client token", a
     "--summary",
     "补充接口清单",
     "--description",
-    "由 CAS Personal Agent 根据用户明确确认创建。\n事项：api-inventory-item\n项目：platform-project\n来源事件：om_confirmed_1",
+    "由 CAS Personal Agent 根据用户明确行动指令创建。\n事项：api-inventory-item\n项目：platform-project\n来源事件：om_confirmed_1",
     "--assignee",
     "ou_xiaowang",
   ]);

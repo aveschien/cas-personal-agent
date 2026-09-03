@@ -100,7 +100,7 @@ test("collaborative Actions expose only read-only contact resolution beside sema
     "state_apply_operation",
     "contact_resolve_collaborator",
   ]);
-  assert.match(factoryInput?.systemPrompt ?? "", /confirmed=true/);
+  assert.match(factoryInput?.systemPrompt ?? "", /无需二次确认/);
   assert.match(factoryInput?.systemPrompt ?? "", /零结果或多结果时只生成 clarify/);
   runtime.dispose();
 });

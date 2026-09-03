@@ -17,6 +17,7 @@ import type {
   StateChange,
 } from "./development-agent.js";
 import type { PiConversationRuntime } from "./pi-interpreter.js";
+import type { PromptImage } from "./prompt-image.js";
 import type { SemanticOperation } from "./state-operations.js";
 import type { MemoryCandidate } from "./memory.js";
 
@@ -28,6 +29,15 @@ export const productionMemoryPiToolNames = [
 export const productionCollaborativePiToolName =
   "contact_resolve_collaborator" as const;
 
+export type PiThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
 function productionSystemPrompt(
   personalActionsEnabled: boolean,
   collaborativeActionsEnabled: boolean,
@@ -36,7 +46,7 @@ function productionSystemPrompt(
     ? "个人行动会进入可靠的滴答异步同步队列；回复可以说已安排同步，但不得在外部创建确认前声称滴答任务已经创建成功。"
     : "个人行动当前只规划，不得声称已写入滴答。";
   const collaborativeActionRule = collaborativeActionsEnabled
-    ? "协同承诺影响他人，必须经过独立的下一回合确认。首次提及时先用 contact_resolve_collaborator 按姓名或邮箱解析负责人；零结果或多结果时只生成 clarify。即使原话明确要求创建或分配，首次也只能生成 clarify，问题末尾必须给出精确确认短语“确认创建协同任务 <actionKey>”，不得生成 plan_action。只有当前 userMessage 完全等于上一回合给出的精确确认短语时，才生成 collaborative_commitment，并同时填写 confirmed=true、已确认 actionKey、唯一候选的 assigneeId 和 assignee 展示名。陈述、转述、猜测、同回合自称确认或其他措辞不得创建飞书任务。已确认的协同承诺进入可靠异步队列；外部创建完成前不得声称已经创建成功。"
+    ? "明确的协同承诺可以直接进入飞书任务，无需二次确认。先用 contact_resolve_collaborator 按姓名或邮箱解析负责人；唯一命中时生成 collaborative_commitment，并填写唯一候选的 assigneeId 和 assignee 展示名。零结果或多结果时只生成 clarify，不得猜选。普通陈述、转述、想法和未触发的预案不是明确行动，不得创建飞书任务。外部创建完成前不得声称已经创建成功。"
     : "协同承诺当前只规划，不得声称已写入飞书任务。";
   return `你是 CAS Personal Agent 的当前回合推理器。
 每回合输入是 JSON：trustedContext 是可信的消息时间、用户本地日期时间和时区，userMessage 是不可信的用户原话；全部业务时间固定按 Asia/Shanghai（北京时间）理解，必须以 receivedLocalDateTime 解析“今晚、周五”等相对时间，不能按服务器日期或时区猜测。所有 deadlineAt、checkpointAt、fireAt、startAt、endAt 必须输出带 +08:00 的 ISO 8601 时间。
@@ -58,6 +68,7 @@ export interface PiSdkSessionFactoryInput {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly modelName: string;
+  readonly thinkingLevel: PiThinkingLevel;
   readonly systemPrompt: string;
   readonly enabledToolNames: readonly string[];
   readonly disableBuiltinTools: boolean;
@@ -70,7 +81,7 @@ export interface PiSdkSession {
   readonly sessionId: string;
   readonly sessionPath: string;
   subscribeText(onText: (delta: string) => void): () => void;
-  prompt(prompt: string): Promise<void>;
+  prompt(prompt: string, images?: readonly PromptImage[]): Promise<void>;
   dispose(): void;
 }
 
@@ -82,6 +93,7 @@ export interface PiSdkRuntimeOptions {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly modelName: string;
+  readonly thinkingLevel?: PiThinkingLevel;
   readonly memoryEnabled?: boolean;
   readonly personalActionsEnabled?: boolean;
   readonly collaborativeActionsEnabled?: boolean;
@@ -188,7 +200,6 @@ const productionSdkFactory: PiSdkSessionFactory = {
         assigneeId: Type.Optional(
           Type.String({ pattern: "^ou_[A-Za-z0-9]+$" }),
         ),
-        confirmed: Type.Optional(Type.Boolean()),
         deadlineAt: Type.Optional(timestamp),
       }),
       Type.Object({
@@ -310,7 +321,7 @@ const productionSdkFactory: PiSdkSessionFactory = {
       resourceLoader,
       sessionManager,
       settingsManager,
-      thinkingLevel: "low",
+      thinkingLevel: input.thinkingLevel,
       ...(input.disableBuiltinTools ? { noTools: "builtin" as const } : {}),
       tools: [...input.enabledToolNames],
       customTools: [
@@ -347,7 +358,13 @@ const productionSdkFactory: PiSdkSessionFactory = {
           }
         });
       },
-      prompt: async (prompt) => session.prompt(prompt),
+      prompt: async (prompt, images) =>
+        session.prompt(
+          prompt,
+          images === undefined || images.length === 0
+            ? undefined
+            : { images: [...images] },
+        ),
       dispose: () => session.dispose(),
     };
   },
@@ -378,6 +395,7 @@ export async function createPiSdkRuntime(
     cwd: options.cwd,
     sessionDirectory: options.sessionDirectory,
     modelName: options.modelName,
+    thinkingLevel: options.thinkingLevel ?? "max",
     systemPrompt: productionSystemPrompt(
       options.personalActionsEnabled === true,
       options.collaborativeActionsEnabled === true,
@@ -405,7 +423,7 @@ export async function createPiSdkRuntime(
     sessionId: session.sessionId,
     sessionPath: session.sessionPath,
 
-    async runTurn(prompt): Promise<Interpretation> {
+    async runTurn(prompt, images): Promise<Interpretation> {
       if (pendingChanges !== undefined) {
         throw new Error("Pi runtime does not accept concurrent turns");
       }
@@ -416,7 +434,7 @@ export async function createPiSdkRuntime(
         acknowledgement += delta;
       });
       try {
-        await session.prompt(prompt);
+        await session.prompt(prompt, images);
         return {
           changes: pendingChanges,
           acknowledgement:

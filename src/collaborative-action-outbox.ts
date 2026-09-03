@@ -30,12 +30,11 @@ export function createCollaborativeActionOutbox(
         return;
       }
       if (
-        action.confirmed !== true ||
         !/^ou_[A-Za-z0-9]+$/.test(action.assigneeId ?? "") ||
         (action.assignee ?? "").trim().length === 0
       ) {
         throw new Error(
-          "Feishu Task creation requires explicit confirmation and a resolved assignee",
+          "Feishu Task creation requires a uniquely resolved assignee",
         );
       }
       const now = new Date().toISOString();

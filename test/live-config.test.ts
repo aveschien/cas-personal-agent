@@ -26,6 +26,7 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
       allowedUserIds: ["ou_one", "ou_two"],
       piSessionDirectory: resolve(cwd, "state/pi-sessions"),
       piModel: "openai-codex/gpt-5.6-luna",
+      piThinkingLevel: "max",
       bitableBaseToken: "bas_state",
       bitableTables: {
         projects: "tbl_projects",
@@ -42,6 +43,11 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
       },
       personalActions: { enabled: false },
       collaborativeActions: { enabled: false },
+      messageBatching: {
+        enabled: true,
+        settleMs: 8_000,
+        maxWaitMs: 30_000,
+      },
     },
   );
 
@@ -92,6 +98,52 @@ test("live config rejects malformed Pi model identifiers", () => {
         "/srv/cas-personal-agent",
       ),
     /CAS_PI_MODEL must use provider\/model format/,
+  );
+});
+
+test("live config accepts an explicit Pi thinking level and validates batching", () => {
+  const common = {
+    CAS_ALLOWED_USER_IDS: "ou_one",
+    CAS_BITABLE_BASE_TOKEN: "bas_state",
+    CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+    CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+    CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+  };
+  const config = loadLiveConfig(
+    {
+      ...common,
+      CAS_PI_THINKING_LEVEL: "xhigh",
+      CAS_MESSAGE_BATCHING_ENABLED: "false",
+      CAS_MESSAGE_SETTLE_MS: "5000",
+      CAS_MESSAGE_MAX_WAIT_MS: "20000",
+    },
+    "/srv/cas-personal-agent",
+  );
+  assert.equal(config.piThinkingLevel, "xhigh");
+  assert.deepEqual(config.messageBatching, {
+    enabled: false,
+    settleMs: 5_000,
+    maxWaitMs: 20_000,
+  });
+  assert.throws(
+    () =>
+      loadLiveConfig(
+        { ...common, CAS_PI_THINKING_LEVEL: "ultra" },
+        "/srv/cas-personal-agent",
+      ),
+    /CAS_PI_THINKING_LEVEL is invalid/,
+  );
+  assert.throws(
+    () =>
+      loadLiveConfig(
+        {
+          ...common,
+          CAS_MESSAGE_SETTLE_MS: "30000",
+          CAS_MESSAGE_MAX_WAIT_MS: "8000",
+        },
+        "/srv/cas-personal-agent",
+      ),
+    /CAS_MESSAGE_MAX_WAIT_MS must be at least CAS_MESSAGE_SETTLE_MS/,
   );
 });
 

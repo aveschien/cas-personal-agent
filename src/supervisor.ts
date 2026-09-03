@@ -4,6 +4,7 @@ import type {
   LarkEventChannel,
 } from "./lark-event-channel.js";
 import type { ReplyAdapter } from "./lark-reply-adapter.js";
+import type { MessageBatcher } from "./message-batcher.js";
 
 export interface Supervisor {
   start(): Promise<void>;
@@ -14,6 +15,7 @@ export interface SupervisorOptions {
   readonly channel: LarkEventChannel;
   readonly agent: Pick<DevelopmentAgent, "ingest">;
   readonly replies: ReplyAdapter;
+  readonly batcher?: MessageBatcher;
   readonly onError?: (error: unknown) => void;
 }
 
@@ -26,6 +28,11 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     message: IncomingChannelMessage,
   ): Promise<void> => {
     if (message.chatType !== "p2p" || message.senderType !== "user") {
+      return;
+    }
+
+    if (options.batcher !== undefined) {
+      await options.batcher.accept(message);
       return;
     }
 
@@ -60,6 +67,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
 
     async stop() {
       await options.channel.stop();
+      await options.batcher?.stop();
     },
   };
 }

@@ -9,11 +9,15 @@ import {
 } from "./business-time.js";
 import type { PiSessionRegistry } from "./pi-session-registry.js";
 import type { MemoryAdapter, RecalledMemory } from "./memory.js";
+import type { PromptImage } from "./prompt-image.js";
 
 export interface PiConversationRuntime {
   readonly sessionId: string;
   readonly sessionPath: string;
-  runTurn(prompt: string): Promise<Interpretation>;
+  runTurn(
+    prompt: string,
+    images?: readonly PromptImage[],
+  ): Promise<Interpretation>;
   dispose(): void;
 }
 
@@ -91,6 +95,7 @@ export function createPiInterpreter(
           },
           userMessage: event.rawText,
         }),
+        event.images,
       );
       options.registry.recordCompletedTurn(options.runtime.sessionId, clock());
       return result;

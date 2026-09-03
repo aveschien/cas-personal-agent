@@ -12,6 +12,7 @@ import type {
 } from "./state-operations.js";
 import type { MemoryCandidate } from "./memory.js";
 import { validateMemoryCandidate } from "./memory.js";
+import type { PromptImage } from "./prompt-image.js";
 
 export type { ItemStatus, ItemType } from "./state-operations.js";
 
@@ -21,6 +22,7 @@ export interface ChannelEvent {
   readonly userId: string;
   readonly rawText: string;
   readonly rawPayload: Readonly<Record<string, unknown>>;
+  readonly images?: readonly PromptImage[];
 }
 
 export interface ItemStateChange {
@@ -62,7 +64,6 @@ export interface StateAdapter {
 export interface StateProjectionContext {
   readonly sourceEventId: string;
   readonly receivedAt: string;
-  readonly rawUserText: string;
 }
 
 export interface IngestResult {
@@ -149,7 +150,6 @@ export function createDevelopmentAgent(
         await options.stateAdapter.project(interpretation.changes, {
           sourceEventId: event.sourceMessageId,
           receivedAt: event.receivedAt,
-          rawUserText: event.rawText,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

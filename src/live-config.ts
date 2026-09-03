@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import type { LiveServiceConfig } from "./live-service.js";
+import type { PiThinkingLevel } from "./pi-sdk-runtime.js";
 
 export interface LiveEnvironment {
   readonly [key: string]: string | undefined;
@@ -8,6 +9,7 @@ export interface LiveEnvironment {
   readonly CAS_DATABASE_PATH?: string;
   readonly CAS_PI_SESSION_DIR?: string;
   readonly CAS_PI_MODEL?: string;
+  readonly CAS_PI_THINKING_LEVEL?: string;
   readonly CAS_BITABLE_BASE_TOKEN?: string;
   readonly CAS_BITABLE_PROJECTS_TABLE_ID?: string;
   readonly CAS_BITABLE_ITEMS_TABLE_ID?: string;
@@ -23,6 +25,9 @@ export interface LiveEnvironment {
   readonly TICKTICK_PROJECT_ID?: string;
   readonly TICKTICK_BASE_URL?: string;
   readonly FEISHU_TASK_ENABLED?: string;
+  readonly CAS_MESSAGE_BATCHING_ENABLED?: string;
+  readonly CAS_MESSAGE_SETTLE_MS?: string;
+  readonly CAS_MESSAGE_MAX_WAIT_MS?: string;
 }
 
 function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
@@ -82,6 +87,18 @@ function positiveInteger(
   return parsed;
 }
 
+function thinkingLevel(value: string | undefined): PiThinkingLevel {
+  const normalized = value?.trim() || "max";
+  if (
+    !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
+      normalized,
+    )
+  ) {
+    throw new Error("CAS_PI_THINKING_LEVEL is invalid");
+  }
+  return normalized as PiThinkingLevel;
+}
+
 function hindsightBaseUrl(value: string | undefined): string {
   const raw = value?.trim() || "http://127.0.0.1:8888";
   const url = new URL(raw);
@@ -132,6 +149,24 @@ export function loadLiveConfig(
     false,
     "FEISHU_TASK_ENABLED",
   );
+  const messageBatchingEnabled = parseBoolean(
+    environment.CAS_MESSAGE_BATCHING_ENABLED,
+    true,
+    "CAS_MESSAGE_BATCHING_ENABLED",
+  );
+  const messageSettleMs = positiveInteger(
+    environment.CAS_MESSAGE_SETTLE_MS,
+    8_000,
+    "CAS_MESSAGE_SETTLE_MS",
+  );
+  const messageMaxWaitMs = positiveInteger(
+    environment.CAS_MESSAGE_MAX_WAIT_MS,
+    30_000,
+    "CAS_MESSAGE_MAX_WAIT_MS",
+  );
+  if (messageMaxWaitMs < messageSettleMs) {
+    throw new Error("CAS_MESSAGE_MAX_WAIT_MS must be at least CAS_MESSAGE_SETTLE_MS");
+  }
   const bankId = environment.HINDSIGHT_BANK_ID?.trim() || "cas-personal-agent";
   if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(bankId)) {
     throw new Error("HINDSIGHT_BANK_ID must be a stable lowercase key");
@@ -149,6 +184,7 @@ export function loadLiveConfig(
       environment.CAS_PI_SESSION_DIR ?? "./var/pi-sessions",
     ),
     piModel,
+    piThinkingLevel: thinkingLevel(environment.CAS_PI_THINKING_LEVEL),
     bitableBaseToken: required(environment, "CAS_BITABLE_BASE_TOKEN"),
     bitableTables: {
       projects: required(environment, "CAS_BITABLE_PROJECTS_TABLE_ID"),
@@ -187,5 +223,10 @@ export function loadLiveConfig(
         }
       : { enabled: false },
     collaborativeActions: { enabled: feishuTaskEnabled },
+    messageBatching: {
+      enabled: messageBatchingEnabled,
+      settleMs: messageSettleMs,
+      maxWaitMs: messageMaxWaitMs,
+    },
   };
 }
