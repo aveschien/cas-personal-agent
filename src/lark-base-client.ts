@@ -45,7 +45,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseSuccess(result: CommandResult, operation: string): Record<string, unknown> {
   if (result.exitCode !== 0) {
-    throw new Error(`Lark Base ${operation} failed`);
+    const diagnostic = `${result.stderr}\n${result.stdout}`;
+    const code = diagnostic.match(/\b\d{6,}\b/)?.[0];
+    throw new Error(
+      `Lark Base ${operation} failed${code === undefined ? "" : ` (code ${code})`}`,
+    );
   }
   let value: unknown;
   try {

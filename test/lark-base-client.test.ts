@@ -112,3 +112,20 @@ test("the Lark Base client rejects duplicate stable keys", async () => {
     /duplicate item_key same/,
   );
 });
+
+test("the Lark Base client preserves a safe external error code", async () => {
+  const client = createLarkBaseClient({
+    baseToken: "bas_test",
+    runner: {
+      run: async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: '{"code":800030005,"msg":"not_found"}',
+      }),
+    },
+  });
+  await assert.rejects(
+    client.create("tbl_projects", "project_key", "project", {}),
+    /record create failed \(code 800030005\)/,
+  );
+});

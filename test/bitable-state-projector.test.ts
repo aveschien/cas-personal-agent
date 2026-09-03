@@ -167,3 +167,47 @@ test("typed state operations upsert linked Bitable records idempotently", async 
     },
   );
 });
+
+test("an unknown free-text Project phase cannot block the rest of its projection", async () => {
+  let createdFields: Readonly<Record<string, unknown>> | undefined;
+  const projector = createBitableStateProjector({
+    client: {
+      findByKey: async () => undefined,
+      create: async (_tableId, _keyField, _key, fields) => {
+        createdFields = fields;
+        return { recordId: "rec_project", fields };
+      },
+      update: async () => undefined,
+    },
+    tables: {
+      projects: "tbl_projects",
+      items: "tbl_items",
+      actionLinks: "tbl_actions",
+    },
+    reminders: { schedule: async () => undefined },
+  });
+
+  await projector.project({
+    sourceEventId: "batch:om_free_text_phase",
+    operations: [
+      ({
+        kind: "upsert_project",
+        projectKey: "internal-ai-assistant",
+        name: "内部助手",
+        status: "tracking",
+        phase: "产品持续研发与治理",
+        summary: "继续推进",
+      } as unknown as SemanticOperation),
+    ],
+  });
+
+  assert.deepEqual(createdFields, {
+    项目名: "内部助手",
+    状态: ["在跟"],
+    project_key: "internal-ai-assistant",
+    来源事件: "batch:om_free_text_phase",
+    last_effective_event_id: "batch:om_free_text_phase",
+    created_by_agent: true,
+    当前摘要: "继续推进",
+  });
+});

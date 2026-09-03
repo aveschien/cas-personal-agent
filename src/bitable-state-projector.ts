@@ -5,6 +5,7 @@ import {
   type ActionType,
   type CompileBitableProjectionInput,
   type ItemProjection,
+  projectPhases,
   type ProjectProjection,
   type ReminderProjection,
 } from "./state-operations.js";
@@ -104,6 +105,8 @@ const factOwner = {
   bitable: "Bitable",
 } satisfies Readonly<Record<ActionFactOwner, string>>;
 
+const validProjectPhases = new Set<string>(projectPhases);
+
 function projectFields(project: ProjectProjection): Record<string, unknown> {
   return {
     项目名: project.name,
@@ -113,7 +116,9 @@ function projectFields(project: ProjectProjection): Record<string, unknown> {
     last_effective_event_id: project.sourceEventId,
     created_by_agent: true,
     ...(project.goal === undefined ? {} : { 目标: project.goal }),
-    ...(project.phase === undefined ? {} : { 阶段: [project.phase] }),
+    ...(project.phase === undefined || !validProjectPhases.has(project.phase)
+      ? {}
+      : { 阶段: [project.phase] }),
     ...(project.summary === undefined ? {} : { 当前摘要: project.summary }),
   };
 }

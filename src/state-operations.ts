@@ -11,6 +11,17 @@ export type ItemStatus =
   | "abandoned"
   | "archived";
 export type ProjectStatus = "tracking" | "paused" | "finished";
+export const projectPhases = [
+  "需求沟通",
+  "方案",
+  "报价",
+  "审批",
+  "实施",
+  "验收",
+  "日常运营",
+  "个人计划",
+] as const;
+export type ProjectPhase = (typeof projectPhases)[number];
 export type ActionType =
   | "personal_action"
   | "collaborative_commitment"
@@ -23,7 +34,7 @@ export interface UpsertProjectOperation {
   readonly name: string;
   readonly status: ProjectStatus;
   readonly goal?: string;
-  readonly phase?: string;
+  readonly phase?: ProjectPhase;
   readonly summary?: string;
 }
 
@@ -127,7 +138,7 @@ export interface ProjectProjection {
   readonly name: string;
   readonly status: ProjectStatus;
   readonly goal?: string;
-  readonly phase?: string;
+  readonly phase?: ProjectPhase;
   readonly summary?: string;
   readonly sourceEventId: string;
 }
