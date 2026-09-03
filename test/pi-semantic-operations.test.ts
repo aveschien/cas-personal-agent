@@ -66,3 +66,58 @@ test("Pi can emit multiple controlled semantic operations for one mixed input", 
   assert.equal(result.acknowledgement, "已拆分等待事项和暂存想法；周五检查。");
   runtime.dispose();
 });
+
+test("collaborative Actions expose only read-only contact resolution beside semantic tools", async () => {
+  let factoryInput: PiSdkSessionFactoryInput | undefined;
+  const runtime = await createPiSdkRuntime({
+    cwd: "/srv/cas-agent",
+    sessionDirectory: "/srv/cas-agent/var/pi-sessions",
+    modelName: "openai-codex/gpt-5.6-luna",
+    collaborativeActionsEnabled: true,
+    collaboratorResolver: {
+      resolve: async () => [
+        {
+          openId: "ou_xiaowang",
+          name: "小王",
+          isCrossTenant: false,
+        },
+      ],
+    },
+    sdkFactory: {
+      create: async (input) => {
+        factoryInput = input;
+        return {
+          sessionId: "pi-collaborative-session",
+          sessionPath: join(input.sessionDirectory, "pi-collaborative.jsonl"),
+          subscribeText: () => () => undefined,
+          prompt: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    },
+  });
+  assert.deepEqual(factoryInput?.enabledToolNames, [
+    "state_apply_operation",
+    "contact_resolve_collaborator",
+  ]);
+  assert.match(factoryInput?.systemPrompt ?? "", /confirmed=true/);
+  assert.match(factoryInput?.systemPrompt ?? "", /零结果或多结果时只生成 clarify/);
+  runtime.dispose();
+});
+
+test("collaborative Actions cannot start without a controlled resolver", async () => {
+  await assert.rejects(
+    createPiSdkRuntime({
+      cwd: "/srv/cas-agent",
+      sessionDirectory: "/srv/cas-agent/var/pi-sessions",
+      modelName: "openai-codex/gpt-5.6-luna",
+      collaborativeActionsEnabled: true,
+      sdkFactory: {
+        create: async () => {
+          throw new Error("must not create a session");
+        },
+      },
+    }),
+    /require a Feishu collaborator resolver/,
+  );
+});

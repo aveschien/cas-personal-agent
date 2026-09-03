@@ -64,6 +64,8 @@ export interface PlanActionOperation {
   readonly actionType: Exclude<ActionType, "scheduled_event">;
   readonly factOwner: Exclude<ActionFactOwner, "bitable">;
   readonly assignee?: string;
+  readonly assigneeId?: string;
+  readonly confirmed?: boolean;
   readonly deadlineAt?: string;
 }
 
@@ -99,6 +101,28 @@ export type SemanticOperation =
   | CreateScheduledEventOperation
   | ScheduleCheckpointOperation
   | ClarifyOperation;
+
+export function collaborativeConfirmationPhrase(actionKey: string): string {
+  assertKey(actionKey, "actionKey");
+  return `确认创建协同任务 ${actionKey}`;
+}
+
+export function assertCollaborativeConfirmations(
+  operations: readonly SemanticOperation[],
+  rawUserText: string,
+): void {
+  for (const operation of operations) {
+    if (
+      operation.kind === "plan_action" &&
+      operation.actionType === "collaborative_commitment" &&
+      rawUserText.trim() !== collaborativeConfirmationPhrase(operation.actionKey)
+    ) {
+      throw new Error(
+        `collaborative commitment ${operation.actionKey} lacks the exact user confirmation phrase`,
+      );
+    }
+  }
+}
 
 const semanticOperationKinds = new Set<SemanticOperation["kind"]>([
   "upsert_project",
@@ -155,6 +179,8 @@ export interface ActionLinkProjection {
   readonly actionType: ActionType;
   readonly factOwner: ActionFactOwner;
   readonly assignee?: string;
+  readonly assigneeId?: string;
+  readonly confirmed?: true;
   readonly deadlineAt?: string;
   readonly startAt?: string;
   readonly endAt?: string;
@@ -308,6 +334,37 @@ export function compileBitableProjection(
       case "plan_action": {
         assertKey(operation.actionKey, "actionKey");
         assertKey(operation.itemKey, "itemKey");
+        if (
+          operation.actionType === "personal_action" &&
+          operation.factOwner !== "ticktick"
+        ) {
+          throw new Error("personal Actions must be owned by TickTick");
+        }
+        if (
+          operation.actionType === "collaborative_commitment" &&
+          operation.factOwner !== "feishu_task"
+        ) {
+          throw new Error(
+            "collaborative commitments must be owned by Feishu Tasks",
+          );
+        }
+        if (operation.actionType === "collaborative_commitment") {
+          if (operation.confirmed !== true) {
+            throw new Error(
+              "collaborative commitments require explicit confirmation",
+            );
+          }
+          if (!/^ou_[A-Za-z0-9]+$/.test(operation.assigneeId ?? "")) {
+            throw new Error(
+              "collaborative commitments require a resolved Feishu assignee",
+            );
+          }
+          if ((operation.assignee ?? "").trim().length === 0) {
+            throw new Error(
+              "collaborative commitments require an assignee name",
+            );
+          }
+        }
         const deadlineAt =
           operation.deadlineAt === undefined
             ? undefined
@@ -320,6 +377,8 @@ export function compileBitableProjection(
           actionType: operation.actionType,
           factOwner: operation.factOwner,
           ...optional(operation.assignee, "assignee"),
+          ...optional(operation.assigneeId, "assigneeId"),
+          ...(operation.confirmed === true ? { confirmed: true as const } : {}),
           ...optional(deadlineAt, "deadlineAt"),
           syncStatus: "pending",
           sourceEventId: input.sourceEventId,

@@ -41,12 +41,43 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
         recallMaxTokens: 800,
       },
       personalActions: { enabled: false },
+      collaborativeActions: { enabled: false },
     },
   );
 
   assert.throws(
     () => loadLiveConfig({}, cwd),
     /CAS_ALLOWED_USER_IDS must contain at least one Feishu user ID/,
+  );
+});
+
+test("Feishu Task writes require an explicit enable flag", () => {
+  const config = loadLiveConfig(
+    {
+      CAS_ALLOWED_USER_IDS: "ou_one",
+      CAS_BITABLE_BASE_TOKEN: "bas_state",
+      CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+      CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+      CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+      FEISHU_TASK_ENABLED: "true",
+    },
+    "/srv/cas-personal-agent",
+  );
+  assert.deepEqual(config.collaborativeActions, { enabled: true });
+  assert.throws(
+    () =>
+      loadLiveConfig(
+        {
+          CAS_ALLOWED_USER_IDS: "ou_one",
+          CAS_BITABLE_BASE_TOKEN: "bas_state",
+          CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+          CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+          CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+          FEISHU_TASK_ENABLED: "yes",
+        },
+        "/srv/cas-personal-agent",
+      ),
+    /FEISHU_TASK_ENABLED must be true or false/,
   );
 });
 

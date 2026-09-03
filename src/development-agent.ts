@@ -62,6 +62,7 @@ export interface StateAdapter {
 export interface StateProjectionContext {
   readonly sourceEventId: string;
   readonly receivedAt: string;
+  readonly rawUserText: string;
 }
 
 export interface IngestResult {
@@ -148,6 +149,7 @@ export function createDevelopmentAgent(
         await options.stateAdapter.project(interpretation.changes, {
           sourceEventId: event.sourceMessageId,
           receivedAt: event.receivedAt,
+          rawUserText: event.rawText,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

@@ -1,6 +1,12 @@
 import { createActionOutbox } from "./action-outbox.js";
 import { createActionWorker } from "./action-worker.js";
-import type { PersonalActionAdapter } from "./action.js";
+import type {
+  CollaborativeActionAdapter,
+  PersonalActionAdapter,
+} from "./action.js";
+import type { CollaboratorResolver } from "./collaborator.js";
+import { createCollaborativeActionOutbox } from "./collaborative-action-outbox.js";
+import { createCollaborativeActionWorker } from "./collaborative-action-worker.js";
 import { createDevelopmentAgent } from "./development-agent.js";
 import {
   createBitableStateProjector,
@@ -17,12 +23,14 @@ import {
   createLarkEventChannel,
   type LarkEventChannel,
 } from "./lark-event-channel.js";
+import { createLarkCollaboratorResolver } from "./lark-collaborator-resolver.js";
 import {
   createLarkReplyAdapter,
   processCommandRunner,
   type ReplyAdapter,
 } from "./lark-reply-adapter.js";
 import { createLarkReminderNotifier } from "./lark-reminder-notifier.js";
+import { createLarkTaskActionAdapter } from "./lark-task-action-adapter.js";
 import {
   createPiInterpreter,
   type PiConversationRuntime,
@@ -35,7 +43,10 @@ import {
   createReminderWorker,
   type ReminderNotifier,
 } from "./reminder-worker.js";
-import { isSemanticOperation } from "./state-operations.js";
+import {
+  assertCollaborativeConfirmations,
+  isSemanticOperation,
+} from "./state-operations.js";
 import { createSupervisor } from "./supervisor.js";
 import { createTickTickActionAdapter } from "./ticktick-action-adapter.js";
 
@@ -63,6 +74,7 @@ export interface LiveServiceConfig {
         readonly projectId: string;
         readonly baseUrl: string;
       };
+  readonly collaborativeActions?: { readonly enabled: boolean };
 }
 
 export interface LiveService {
@@ -77,6 +89,8 @@ export interface RuntimeFactoryInput {
   readonly modelName: string;
   readonly memoryEnabled: boolean;
   readonly personalActionsEnabled: boolean;
+  readonly collaborativeActionsEnabled: boolean;
+  readonly collaboratorResolver?: CollaboratorResolver;
 }
 
 export interface LiveServiceDependencies {
@@ -90,6 +104,8 @@ export interface LiveServiceDependencies {
   readonly stateProjector?: BitableStateProjector;
   readonly memoryAdapter?: MemoryAdapter;
   readonly personalActionAdapter?: PersonalActionAdapter;
+  readonly collaborativeActionAdapter?: CollaborativeActionAdapter;
+  readonly collaboratorResolver?: CollaboratorResolver;
   readonly reminderNotifier?: ReminderNotifier;
 }
 
@@ -100,6 +116,11 @@ export async function createLiveService(
   const onError =
     dependencies.onError ?? ((error: unknown) => console.error(error));
   const registry = createPiSessionRegistry(config.databasePath);
+  const collaborativeActionsEnabled =
+    config.collaborativeActions?.enabled === true;
+  const collaboratorResolver = collaborativeActionsEnabled
+    ? (dependencies.collaboratorResolver ?? createLarkCollaboratorResolver())
+    : undefined;
   let runtime: PiConversationRuntime;
   try {
     runtime = await (dependencies.runtimeFactory ?? createPiSdkRuntime)({
@@ -108,6 +129,8 @@ export async function createLiveService(
       modelName: config.piModel,
       memoryEnabled: config.memory.enabled,
       personalActionsEnabled: config.personalActions?.enabled === true,
+      collaborativeActionsEnabled,
+      ...(collaboratorResolver === undefined ? {} : { collaboratorResolver }),
     });
   } catch (error) {
     registry.close();
@@ -141,6 +164,10 @@ export async function createLiveService(
     ownsStateProjector && config.personalActions?.enabled === true
       ? createActionOutbox(config.databasePath)
       : undefined;
+  const collaborativeActionOutbox =
+    ownsStateProjector && collaborativeActionsEnabled
+      ? createCollaborativeActionOutbox(config.databasePath)
+      : undefined;
   const bitableClient = ownsStateProjector
     ? createLarkBaseClient({ baseToken: config.bitableBaseToken })
     : undefined;
@@ -150,7 +177,31 @@ export async function createLiveService(
       client: bitableClient!,
       tables: config.bitableTables,
       reminders: reminderStore!,
-      ...(actionOutbox === undefined ? {} : { actions: actionOutbox }),
+      ...(actionOutbox === undefined && collaborativeActionOutbox === undefined
+        ? {}
+        : {
+            actions: {
+              async schedule(
+                action,
+                actionLinkRecordId,
+                itemRecordId,
+                projectRecordId,
+              ) {
+                await actionOutbox?.schedule(
+                  action,
+                  actionLinkRecordId,
+                  itemRecordId,
+                  projectRecordId,
+                );
+                await collaborativeActionOutbox?.schedule(
+                  action,
+                  actionLinkRecordId,
+                  itemRecordId,
+                  projectRecordId,
+                );
+              },
+            },
+          }),
     });
   const agent = createDevelopmentAgent({
     databasePath: config.databasePath,
@@ -161,6 +212,7 @@ export async function createLiveService(
         if (!changes.every(isSemanticOperation)) {
           throw new Error("Pi returned a non-semantic production state change");
         }
+        assertCollaborativeConfirmations(changes, context.rawUserText);
         await stateProjector.project({
           sourceEventId: context.sourceEventId,
           operations: changes,
@@ -210,6 +262,17 @@ export async function createLiveService(
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
         });
+  const collaborativeActionWorker =
+    collaborativeActionOutbox === undefined || bitableClient === undefined
+      ? undefined
+      : createCollaborativeActionWorker({
+          databasePath: config.databasePath,
+          actions:
+            dependencies.collaborativeActionAdapter ??
+            createLarkTaskActionAdapter(),
+          bitable: bitableClient,
+          actionLinksTableId: config.bitableTables.actionLinks,
+        });
   const channel = dependencies.channel ?? createLarkEventChannel();
   const supervisor = createSupervisor({
     channel,
@@ -239,6 +302,13 @@ export async function createLiveService(
         if (actionWorker !== undefined) {
           for (let count = 0; count < 10; count += 1) {
             if (!(await actionWorker.runOnce())) {
+              break;
+            }
+          }
+        }
+        if (collaborativeActionWorker !== undefined) {
+          for (let count = 0; count < 10; count += 1) {
+            if (!(await collaborativeActionWorker.runOnce())) {
               break;
             }
           }
@@ -291,9 +361,11 @@ export async function createLiveService(
         registry.close();
         reminderStore?.close();
         actionOutbox?.close();
+        collaborativeActionOutbox?.close();
         repairWorker.close();
         memoryWorker?.close();
         actionWorker?.close();
+        collaborativeActionWorker?.close();
         reminderWorker?.close();
       }
     },

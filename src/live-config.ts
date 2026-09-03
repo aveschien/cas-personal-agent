@@ -22,6 +22,7 @@ export interface LiveEnvironment {
   readonly TICKTICK_API_TOKEN?: string;
   readonly TICKTICK_PROJECT_ID?: string;
   readonly TICKTICK_BASE_URL?: string;
+  readonly FEISHU_TASK_ENABLED?: string;
 }
 
 function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
@@ -126,6 +127,11 @@ export function loadLiveConfig(
     false,
     "TICKTICK_ENABLED",
   );
+  const feishuTaskEnabled = parseBoolean(
+    environment.FEISHU_TASK_ENABLED,
+    false,
+    "FEISHU_TASK_ENABLED",
+  );
   const bankId = environment.HINDSIGHT_BANK_ID?.trim() || "cas-personal-agent";
   if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(bankId)) {
     throw new Error("HINDSIGHT_BANK_ID must be a stable lowercase key");
@@ -180,5 +186,6 @@ export function loadLiveConfig(
           baseUrl: tickTickBaseUrl(environment.TICKTICK_BASE_URL),
         }
       : { enabled: false },
+    collaborativeActions: { enabled: feishuTaskEnabled },
   };
 }

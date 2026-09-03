@@ -51,7 +51,7 @@ npm run start:live
 
 进程会等待 `lark-cli` 的精确 ready 标记，并在收到 SIGTERM/SIGINT 后优雅关闭事件流、Pi 会话和 SQLite。systemd 模板位于 `deploy/cas-personal-agent.service`。
 
-当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动默认只写入“行动同步”；显式启用滴答后才会进入异步创建队列。飞书任务仍处于规划阶段。
+当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动默认只写入“行动同步”；显式启用滴答后才会进入异步创建队列。协同承诺同样默认只规划，显式启用飞书任务后才允许只读解析负责人，并在用户明确确认后进入可靠创建队列。
 
 只验证真实 Pi SDK、受控工具和多轮上下文，不连接飞书：
 
@@ -149,6 +149,16 @@ TICKTICK_BASE_URL=https://api.ticktick.com/open/v1
 ```
 
 中国区滴答账户使用 `https://api.dida365.com/open/v1`。创建任务前 Adapter 会在目标清单内检查稳定幂等标记；进程在外部创建后、Bitable 回写前中断，也不会因此重复创建任务。外部对象 ID、最新状态和同步时间会回写“行动同步”。
+
+## 协同承诺与飞书任务
+
+飞书任务写入默认关闭。确认 `lark-cli auth status --json --verify` 的用户身份具备 `task:task:read` 和 `task:task:write` 后，可显式启用：
+
+```bash
+FEISHU_TASK_ENABLED=true
+```
+
+启用后，Pi 只有一个额外的只读通讯录解析工具。负责人必须唯一解析为飞书 `open_id`；零结果或同名多结果只会要求澄清。协同承诺首次出现时不会写入，Bot 会给出 `确认创建协同任务 <actionKey>`；只有用户下一回合原样确认后，确定性投影层和 outbox 的多重门禁才允许通过 `lark-cli task +create --as user` 创建。同回合由模型自称“已确认”无法绕过门禁。稳定 client token、审计载荷、有界重试和重启恢复防止重复任务；成功后任务 GUID、链接、状态和同步时间回写“行动同步”。
 
 ## 验证
 

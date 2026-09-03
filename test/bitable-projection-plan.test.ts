@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertCollaborativeConfirmations,
+  collaborativeConfirmationPhrase,
   compileBitableProjection,
   type SemanticOperation,
 } from "../src/state-operations.js";
@@ -212,4 +214,86 @@ test("missing or vague times never manufacture a Reminder", () => {
     ],
   });
   assert.deepEqual(plan.reminders, []);
+});
+
+test("a collaborative commitment requires confirmation and one resolved assignee", () => {
+  const base = {
+    kind: "plan_action",
+    actionKey: "api-inventory",
+    itemKey: "api-inventory-item",
+    title: "补充接口清单",
+    actionType: "collaborative_commitment",
+    factOwner: "feishu_task",
+    assignee: "小王",
+  } as const;
+  assert.throws(
+    () =>
+      compileBitableProjection({
+        sourceEventId: "om_unconfirmed",
+        operations: [base],
+      }),
+    /explicit confirmation/,
+  );
+  assert.throws(
+    () =>
+      compileBitableProjection({
+        sourceEventId: "om_unresolved",
+        operations: [{ ...base, confirmed: true }],
+      }),
+    /resolved Feishu assignee/,
+  );
+  const plan = compileBitableProjection({
+    sourceEventId: "om_confirmed",
+    operations: [
+      {
+        ...base,
+        confirmed: true,
+        assigneeId: "ou_xiaowang",
+        deadlineAt: "2026-09-04T17:00:00+08:00",
+      },
+    ],
+  });
+  assert.deepEqual(plan.actionLinks, [
+    {
+      key: "api-inventory",
+      itemKey: "api-inventory-item",
+      title: "补充接口清单",
+      actionType: "collaborative_commitment",
+      factOwner: "feishu_task",
+      assignee: "小王",
+      assigneeId: "ou_xiaowang",
+      confirmed: true,
+      deadlineAt: "2026-09-04T17:00:00+08:00",
+      syncStatus: "pending",
+      sourceEventId: "om_confirmed",
+    },
+  ]);
+});
+
+test("a collaborative commitment requires the exact next-turn confirmation phrase", () => {
+  const operation: SemanticOperation = {
+    kind: "plan_action",
+    actionKey: "api-inventory",
+    itemKey: "api-inventory-item",
+    title: "补充接口清单",
+    actionType: "collaborative_commitment",
+    factOwner: "feishu_task",
+    assignee: "小王",
+    assigneeId: "ou_xiaowang",
+    confirmed: true,
+  };
+  assert.equal(
+    collaborativeConfirmationPhrase("api-inventory"),
+    "确认创建协同任务 api-inventory",
+  );
+  assert.throws(
+    () => assertCollaborativeConfirmations([operation], "请小王补接口清单"),
+    /exact user confirmation phrase/,
+  );
+  assert.doesNotThrow(() =>
+    assertCollaborativeConfirmations(
+      [operation],
+      "确认创建协同任务 api-inventory",
+    ),
+  );
 });
