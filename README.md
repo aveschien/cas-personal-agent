@@ -51,6 +51,16 @@ npm run start:live
 
 进程会等待 `lark-cli` 的精确 ready 标记，并在收到 SIGTERM/SIGINT 后优雅关闭事件流、Pi 会话和 SQLite。systemd 模板位于 `deploy/cas-personal-agent.service`。
 
+无 root 权限的单用户 VPS 可安装用户级常驻服务；当前用户已开启 linger 时，退出 SSH 后仍会持续监听飞书：
+
+```bash
+mkdir -p ~/.config/systemd/user
+install -m 0644 deploy/cas-personal-agent-user.service ~/.config/systemd/user/cas-personal-agent.service
+systemctl --user daemon-reload
+systemctl --user enable --now cas-personal-agent.service
+systemctl --user status cas-personal-agent.service
+```
+
 当前开发 Base 是 [CAS Personal Agent](https://scnnyorf7h0o.feishu.cn/base/ALm5bispqak1uVsw4uwcJbYxnhe)，包含“项目”“事项”“行动同步”三张表。固定时间安排写成 Bitable 自有的日程事项；截止时间和检查点分别保留为行动截止与事项复查时间。个人行动默认只写入“行动同步”；显式启用滴答后会直接进入异步创建队列，无需二次确认。协同承诺同样默认只规划；显式启用飞书任务后，负责人唯一解析成功的明确行动会直接进入可靠创建队列。
 
 真实飞书入口默认启用消息聚合：每条原始消息先持久化；连续消息在最后一条之后静默 8 秒再合并为一个 Pi 回合，最迟等待 30 秒。文字和随后发送的图片会作为同一批输入，只回复一次。需要立刻处理时，在新消息开头发送 `立即回答`、`现在回答`、`马上回答` 或 `/now`；指令后也可以继续跟正文。

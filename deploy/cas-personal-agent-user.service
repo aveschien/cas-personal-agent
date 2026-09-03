@@ -1,0 +1,23 @@
+[Unit]
+Description=CAS Personal Agent live Feishu service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/data/pi-agent/cas-personal-agent
+EnvironmentFile=/data/pi-agent/cas-personal-agent/.env
+Environment=PATH=/data/pi-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /data/pi-agent/cas-personal-agent/dist/src/live-cli.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/pi-agent/cas-personal-agent/var /data/pi-agent/.lark-cli /data/pi-agent/.pi
+
+[Install]
+WantedBy=default.target
