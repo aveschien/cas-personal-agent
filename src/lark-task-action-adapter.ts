@@ -67,6 +67,12 @@ function parseTask(value: Record<string, unknown>): ExternalCollaborativeAction 
       ? [member.id]
       : [];
   });
+  const assigneeNames = members.flatMap((candidate) => {
+    const member = record(candidate);
+    return member?.role === "assignee" && typeof member.name === "string"
+      ? [member.name]
+      : [];
+  });
   const due = record(task.due);
   const dueTimestamp = due?.timestamp;
   return {
@@ -74,8 +80,14 @@ function parseTask(value: Record<string, unknown>): ExternalCollaborativeAction 
     externalUrl: taskUrl(task.guid, task.url),
     status: task.status === "done" ? "completed" : "open",
     assigneeIds,
-    ...(typeof dueTimestamp === "string" && /^\d+$/.test(dueTimestamp)
-      ? { deadlineAt: new Date(Number(dueTimestamp)).toISOString() }
+    assigneeNames,
+    ...(typeof task.summary === "string" ? { title: task.summary } : {}),
+    deadlineAt:
+      typeof dueTimestamp === "string" && /^\d+$/.test(dueTimestamp)
+        ? new Date(Number(dueTimestamp)).toISOString()
+        : null,
+    ...(typeof task.updated_at === "string" && /^\d+$/.test(task.updated_at)
+      ? { updatedAt: new Date(Number(task.updated_at)).toISOString() }
       : {}),
   };
 }

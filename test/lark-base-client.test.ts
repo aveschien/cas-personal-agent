@@ -12,6 +12,16 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
       ok: true,
       identity: "user",
       data: {
+        data: [["proposal-feedback", "等待"]],
+        fields: ["item_key", "状态"],
+        record_id_list: ["rec_item_1"],
+        has_more: false,
+      },
+    },
+    {
+      ok: true,
+      identity: "user",
+      data: {
         data: [["proposal-feedback"]],
         fields: ["item_key"],
         record_id_list: ["rec_item_1"],
@@ -40,6 +50,13 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
     runner,
   });
 
+  assert.deepEqual(await client.list("tbl_items", ["item_key", "状态"]), [
+    {
+      recordId: "rec_item_1",
+      fields: { item_key: "proposal-feedback", 状态: "等待" },
+    },
+  ]);
+
   assert.deepEqual(
     await client.findByKey("tbl_items", "item_key", "proposal-feedback"),
     {
@@ -64,6 +81,27 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
   assert.deepEqual(calls[0], [
     "lark-cli",
     "base",
+    "+record-list",
+    "--base-token",
+    "bas_test",
+    "--table-id",
+    "tbl_items",
+    "--field-id",
+    "item_key",
+    "--field-id",
+    "状态",
+    "--offset",
+    "0",
+    "--limit",
+    "200",
+    "--format",
+    "json",
+    "--as",
+    "user",
+  ]);
+  assert.deepEqual(calls[1], [
+    "lark-cli",
+    "base",
     "+record-search",
     "--base-token",
     "bas_test",
@@ -85,8 +123,8 @@ test("the Lark Base client performs exact-key lookup, create, and delta update",
     "--as",
     "user",
   ]);
-  assert.equal(calls[1]?.[2], "+record-batch-create");
-  assert.equal(calls[2]?.[2], "+record-batch-update");
+  assert.equal(calls[2]?.[2], "+record-batch-create");
+  assert.equal(calls[3]?.[2], "+record-batch-update");
 });
 
 test("the Lark Base client rejects duplicate stable keys", async () => {

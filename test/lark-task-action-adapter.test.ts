@@ -36,9 +36,16 @@ test("a resolved collaborative commitment uses a stable Feishu client token", as
                 url: "https://applink.feishu.cn/client/todo/detail?guid=task-guid-1",
                 status: "done",
                 members: [
-                  { id: "ou_xiaowang", role: "assignee", type: "user" },
+                  {
+                    id: "ou_xiaowang",
+                    name: "小王",
+                    role: "assignee",
+                    type: "user",
+                  },
                 ],
                 due: { timestamp: "1788454800000", is_all_day: false },
+                summary: "人工调整后的接口清单",
+                updated_at: "1788454900000",
               },
             },
           }),
@@ -90,6 +97,9 @@ test("a resolved collaborative commitment uses a stable Feishu client token", as
   const state = await adapter.getState("task-guid-1");
   assert.equal(state.status, "completed");
   assert.deepEqual(state.assigneeIds, ["ou_xiaowang"]);
+  assert.deepEqual(state.assigneeNames, ["小王"]);
+  assert.equal(state.title, "人工调整后的接口清单");
+  assert.equal(state.updatedAt, "2026-09-03T17:01:40.000Z");
   assert.deepEqual(mutableCalls[1], [
     "task",
     "tasks",

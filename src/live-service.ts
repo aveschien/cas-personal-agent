@@ -5,6 +5,10 @@ import type {
   PersonalActionAdapter,
 } from "./action.js";
 import type { CollaboratorResolver } from "./collaborator.js";
+import {
+  createAuthoritativeActionReader,
+  type AuthoritativeActionReader,
+} from "./authoritative-action-reader.js";
 import { createCollaborativeActionOutbox } from "./collaborative-action-outbox.js";
 import { createCollaborativeActionWorker } from "./collaborative-action-worker.js";
 import { createDevelopmentAgent } from "./development-agent.js";
@@ -116,6 +120,7 @@ export interface LiveServiceDependencies {
   readonly personalActionAdapter?: PersonalActionAdapter;
   readonly collaborativeActionAdapter?: CollaborativeActionAdapter;
   readonly collaboratorResolver?: CollaboratorResolver;
+  readonly authoritativeActionReader?: AuthoritativeActionReader;
   readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
 }
@@ -157,17 +162,6 @@ export async function createLiveService(
       }))
     : undefined;
 
-  const interpreter = createPiInterpreter({
-    logicalConversationId: "cas-main",
-    registry,
-    runtime,
-    ...(memory === undefined ? {} : { memory }),
-    memoryRecallTimeoutMs: config.memory.recallTimeoutMs,
-    memoryRecallMaxResults: config.memory.recallMaxResults,
-    memoryRecallMaxTokens: config.memory.recallMaxTokens,
-    onMemoryError: onError,
-    ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
-  });
   const ownsStateProjector = dependencies.stateProjector === undefined;
   const reminderStore = ownsStateProjector
     ? createReminderStore(config.databasePath)
@@ -183,6 +177,57 @@ export async function createLiveService(
   const bitableClient = ownsStateProjector
     ? createLarkBaseClient({ baseToken: config.bitableBaseToken })
     : undefined;
+  const personalActionAdapter =
+    config.personalActions?.enabled === true
+      ? (dependencies.personalActionAdapter ??
+        createTickTickActionAdapter({
+          apiToken: config.personalActions.apiToken,
+          projectId: config.personalActions.projectId,
+          baseUrl: config.personalActions.baseUrl,
+        }))
+      : undefined;
+  const collaborativeActionAdapter = collaborativeActionsEnabled
+    ? (dependencies.collaborativeActionAdapter ??
+      createLarkTaskActionAdapter())
+    : undefined;
+  const authoritativeActions =
+    dependencies.authoritativeActionReader ??
+    (bitableClient === undefined ||
+    (personalActionAdapter === undefined &&
+      collaborativeActionAdapter === undefined)
+      ? undefined
+      : createAuthoritativeActionReader({
+          bitable: bitableClient,
+          actionLinksTableId: config.bitableTables.actionLinks,
+          ...(personalActionAdapter === undefined ||
+          config.personalActions?.enabled !== true
+            ? {}
+            : {
+                personal: {
+                  adapter: personalActionAdapter,
+                  projectId: config.personalActions.projectId,
+                },
+              }),
+          ...(collaborativeActionAdapter === undefined
+            ? {}
+            : { collaborative: { adapter: collaborativeActionAdapter } }),
+          onError,
+        }));
+  const interpreter = createPiInterpreter({
+    logicalConversationId: "cas-main",
+    registry,
+    runtime,
+    ...(memory === undefined ? {} : { memory }),
+    ...(authoritativeActions === undefined
+      ? {}
+      : { authoritativeActions }),
+    memoryRecallTimeoutMs: config.memory.recallTimeoutMs,
+    memoryRecallMaxResults: config.memory.recallMaxResults,
+    memoryRecallMaxTokens: config.memory.recallMaxTokens,
+    onMemoryError: onError,
+    onCurrentStateError: onError,
+    ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
+  });
   const stateProjector =
     dependencies.stateProjector ??
     createBitableStateProjector({
@@ -263,13 +308,7 @@ export async function createLiveService(
       ? undefined
       : createActionWorker({
           databasePath: config.databasePath,
-          actions:
-            dependencies.personalActionAdapter ??
-            createTickTickActionAdapter({
-              apiToken: config.personalActions.apiToken,
-              projectId: config.personalActions.projectId,
-              baseUrl: config.personalActions.baseUrl,
-            }),
+          actions: personalActionAdapter!,
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
         });
@@ -278,9 +317,7 @@ export async function createLiveService(
       ? undefined
       : createCollaborativeActionWorker({
           databasePath: config.databasePath,
-          actions:
-            dependencies.collaborativeActionAdapter ??
-            createLarkTaskActionAdapter(),
+          actions: collaborativeActionAdapter!,
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
         });

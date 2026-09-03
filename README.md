@@ -162,6 +162,8 @@ TICKTICK_BASE_URL=https://api.ticktick.com/open/v1
 
 中国区滴答账户使用 `https://api.dida365.com/open/v1`。创建任务前 Adapter 会在目标清单内检查稳定幂等标记；进程在外部创建后、Bitable 回写前中断，也不会因此重复创建任务。外部对象 ID、最新状态和同步时间会回写“行动同步”。
 
+每个用户消息回合开始时，Supervisor 会按需读取“行动同步”中已有外部对象 ID 的滴答和飞书任务，不做后台轮询。外部事实源里的完成状态、标题、截止时间和飞书负责人优先于旧对话、旧记忆及 Bitable 旧镜像；检测到变化后会刷新镜像，并把它作为高价值 `correction` 候选异步保留到 Hindsight。单个外部读取失败会降级跳过，不阻断当前消息。
+
 ## 协同承诺与飞书任务
 
 飞书任务写入默认关闭。确认 `lark-cli auth status --json --verify` 的用户身份具备 `task:task:read` 和 `task:task:write` 后，可显式启用：

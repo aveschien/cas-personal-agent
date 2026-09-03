@@ -12,6 +12,9 @@ export interface ExternalPersonalAction {
   readonly externalId: string;
   readonly projectId: string;
   readonly status: "open" | "completed";
+  readonly title?: string;
+  readonly deadlineAt?: string | null;
+  readonly updatedAt?: string;
 }
 
 export interface PersonalActionAdapter {
@@ -41,7 +44,10 @@ export interface ExternalCollaborativeAction {
   readonly externalUrl: string;
   readonly status: "open" | "completed";
   readonly assigneeIds: readonly string[];
-  readonly deadlineAt?: string;
+  readonly assigneeNames?: readonly string[];
+  readonly title?: string;
+  readonly deadlineAt?: string | null;
+  readonly updatedAt?: string;
 }
 
 export interface CollaborativeActionAdapter {

@@ -122,6 +122,31 @@ test("a bodyless TickTick create response is reconciled by its marker", async ()
   );
 });
 
+test("TickTick state exposes authoritative title, deadline, and modification time", async () => {
+  const adapter = createTickTickActionAdapter({
+    apiToken: "secret-token",
+    projectId: "project-1",
+    fetcher: async () =>
+      Response.json({
+        id: "task-1",
+        projectId: "project-1",
+        title: "人工改过的标题",
+        dueDate: "2026-09-05T18:00:00+0800",
+        modifiedTime: "2026-09-03T09:00:00.000Z",
+        status: 2,
+      }),
+  });
+
+  assert.deepEqual(await adapter.getState("project-1", "task-1"), {
+    externalId: "task-1",
+    projectId: "project-1",
+    status: "completed",
+    title: "人工改过的标题",
+    deadlineAt: "2026-09-05T18:00:00+0800",
+    updatedAt: "2026-09-03T09:00:00.000Z",
+  });
+});
+
 test("TickTick credentials cannot be sent to an untrusted API host", () => {
   assert.throws(
     () =>

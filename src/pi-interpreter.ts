@@ -10,6 +10,10 @@ import {
 import type { PiSessionRegistry } from "./pi-session-registry.js";
 import type { MemoryAdapter, RecalledMemory } from "./memory.js";
 import type { PromptImage } from "./prompt-image.js";
+import type {
+  AuthoritativeActionReader,
+  AuthoritativeActionReconciliation,
+} from "./authoritative-action-reader.js";
 
 export interface PiConversationRuntime {
   readonly sessionId: string;
@@ -35,6 +39,8 @@ export interface PiInterpreterOptions {
   readonly memoryRecallMaxResults?: number;
   readonly memoryRecallMaxTokens?: number;
   readonly onMemoryError?: (error: unknown) => void;
+  readonly authoritativeActions?: AuthoritativeActionReader;
+  readonly onCurrentStateError?: (error: unknown) => void;
 }
 
 export function createPiInterpreter(
@@ -73,6 +79,17 @@ export function createPiInterpreter(
       }
     }
   };
+  const reconcileActions = async (): Promise<AuthoritativeActionReconciliation> => {
+    if (options.authoritativeActions === undefined) {
+      return { states: [], memoryCandidates: [] };
+    }
+    try {
+      return await options.authoritativeActions.reconcile(clock());
+    } catch (error) {
+      options.onCurrentStateError?.(error);
+      return { states: [], memoryCandidates: [] };
+    }
+  };
   options.registry.activate({
     logicalConversationId: options.logicalConversationId,
     piSessionId: options.runtime.sessionId,
@@ -82,7 +99,10 @@ export function createPiInterpreter(
 
   return {
     async interpret(event: ChannelEvent) {
-      const recalledMemories = await recallMemory(event);
+      const [recalledMemories, authoritativeActions] = await Promise.all([
+        recallMemory(event),
+        reconcileActions(),
+      ]);
       const result = await options.runtime.runTurn(
         JSON.stringify({
           trustedContext: {
@@ -92,13 +112,23 @@ export function createPiInterpreter(
             ...(recalledMemories.length === 0
               ? {}
               : { recalledMemories }),
+            ...(authoritativeActions.states.length === 0
+              ? {}
+              : { authoritativeActions: authoritativeActions.states }),
           },
           userMessage: event.rawText,
         }),
         event.images,
       );
       options.registry.recordCompletedTurn(options.runtime.sessionId, clock());
-      return result;
+      const memoryCandidates = [
+        ...authoritativeActions.memoryCandidates,
+        ...(result.memoryCandidates ?? []),
+      ];
+      return {
+        ...result,
+        ...(memoryCandidates.length === 0 ? {} : { memoryCandidates }),
+      };
     },
 
     dispose() {

@@ -34,6 +34,13 @@ export interface BitableRecordClient {
   ): Promise<void>;
 }
 
+export interface BitableRecordQueryClient extends BitableRecordClient {
+  list(
+    tableId: string,
+    fields: readonly string[],
+  ): Promise<readonly BitableRecord[]>;
+}
+
 export interface ReminderProjectionSink {
   schedule(
     reminder: ReminderProjection,

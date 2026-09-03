@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 
 import type {
   BitableRecord,
-  BitableRecordClient,
+  BitableRecordQueryClient,
 } from "./bitable-state-projector.js";
 import type {
   CommandResult,
@@ -75,13 +75,76 @@ function recordIds(data: Record<string, unknown>): string[] {
   return [];
 }
 
+function listedRecords(
+  data: Record<string, unknown>,
+  requestedFields: readonly string[],
+): BitableRecord[] {
+  const rows = Array.isArray(data.data) ? data.data : [];
+  const fields = Array.isArray(data.fields) ? data.fields : [];
+  const ids = recordIds(data);
+  if (!fields.every((field) => typeof field === "string")) {
+    throw new Error("Lark Base record list returned invalid fields");
+  }
+  for (const requested of requestedFields) {
+    if (!fields.includes(requested)) {
+      throw new Error(`Lark Base record list omitted field ${requested}`);
+    }
+  }
+  if (rows.length !== ids.length) {
+    throw new Error("Lark Base record list returned misaligned rows");
+  }
+  return ids.map((recordId, rowIndex) => {
+    const row = rows[rowIndex];
+    if (!Array.isArray(row) || row.length !== fields.length) {
+      throw new Error("Lark Base record list returned an invalid row");
+    }
+    return {
+      recordId,
+      fields: Object.fromEntries(
+        fields.map((field, fieldIndex) => [field as string, row[fieldIndex]]),
+      ),
+    };
+  });
+}
+
 export function createLarkBaseClient(
   options: LarkBaseClientOptions,
-): BitableRecordClient {
+): BitableRecordQueryClient {
   const command = options.command ?? "lark-cli";
   const runner = options.runner ?? processRunner;
 
   return {
+    async list(tableId, fields) {
+      if (fields.length === 0) {
+        throw new Error("Lark Base record list requires at least one field");
+      }
+      const records: BitableRecord[] = [];
+      for (let offset = 0; ; offset += 200) {
+        const result = await runner.run(command, [
+          "base",
+          "+record-list",
+          "--base-token",
+          options.baseToken,
+          "--table-id",
+          tableId,
+          ...fields.flatMap((field) => ["--field-id", field]),
+          "--offset",
+          String(offset),
+          "--limit",
+          "200",
+          "--format",
+          "json",
+          "--as",
+          "user",
+        ]);
+        const data = parseSuccess(result, "record list");
+        records.push(...listedRecords(data, fields));
+        if (data.has_more !== true) {
+          return records;
+        }
+      }
+    },
+
     async findByKey(tableId, keyField, key) {
       const result = await runner.run(command, [
         "base",

@@ -161,3 +161,67 @@ test("memory recall is injected with provenance and failure degrades silently", 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("authoritative Action corrections reach Pi and become memory candidates", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-agent-authority-"));
+  const registry = createPiSessionRegistry(join(directory, "events.sqlite"));
+  let prompt = "";
+  const interpreter = createPiInterpreter({
+    logicalConversationId: "cas-main",
+    registry,
+    runtime: {
+      sessionId: "pi-authority-session",
+      sessionPath: join(directory, "pi-authority-session.jsonl"),
+      runTurn: async (value) => {
+        prompt = value;
+        return { changes: [], acknowledgement: "已按滴答最新状态处理。" };
+      },
+      dispose: () => undefined,
+    },
+    authoritativeActions: {
+      reconcile: async () => ({
+        states: [
+          {
+            actionKey: "finish-proposal",
+            title: "完成方案",
+            factOwner: "ticktick",
+            status: "completed",
+            correctedFields: ["完成状态"],
+          },
+        ],
+        memoryCandidates: [
+          {
+            key: "action-correction-finish-proposal-abc",
+            category: "correction",
+            content: "权威纠正：完成方案已在滴答完成。",
+          },
+        ],
+      }),
+    },
+  });
+  try {
+    const result = await interpreter.interpret({
+      sourceMessageId: "om_authority",
+      receivedAt: "2026-09-03T03:00:00.000Z",
+      userId: "ou_authorized",
+      rawText: "这个方案现在怎么样",
+      rawPayload: {},
+    });
+    const parsed = JSON.parse(prompt) as {
+      trustedContext: { authoritativeActions?: unknown[] };
+    };
+    assert.equal(parsed.trustedContext.authoritativeActions?.length, 1);
+    assert.match(prompt, /"status":"completed"/);
+    assert.deepEqual(result.memoryCandidates, [
+      {
+        key: "action-correction-finish-proposal-abc",
+        category: "correction",
+        content: "权威纠正：完成方案已在滴答完成。",
+      },
+    ]);
+  } finally {
+    interpreter.dispose();
+    registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

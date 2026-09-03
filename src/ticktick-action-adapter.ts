@@ -18,6 +18,9 @@ interface TickTickTask {
   readonly projectId: string;
   readonly content?: string;
   readonly status?: number;
+  readonly title?: string;
+  readonly dueDate?: string;
+  readonly modifiedTime?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -37,6 +40,11 @@ function parseTask(value: unknown): TickTickTask {
     projectId: value.projectId,
     ...(typeof value.content === "string" ? { content: value.content } : {}),
     ...(typeof value.status === "number" ? { status: value.status } : {}),
+    ...(typeof value.title === "string" ? { title: value.title } : {}),
+    ...(typeof value.dueDate === "string" ? { dueDate: value.dueDate } : {}),
+    ...(typeof value.modifiedTime === "string"
+      ? { modifiedTime: value.modifiedTime }
+      : {}),
   };
 }
 
@@ -45,6 +53,17 @@ function toExternal(task: TickTickTask): ExternalPersonalAction {
     externalId: task.id,
     projectId: task.projectId,
     status: task.status === 2 ? "completed" : "open",
+  };
+}
+
+function toExternalState(task: TickTickTask): ExternalPersonalAction {
+  return {
+    ...toExternal(task),
+    ...(task.title === undefined ? {} : { title: task.title }),
+    deadlineAt: task.dueDate ?? null,
+    ...(task.modifiedTime === undefined
+      ? {}
+      : { updatedAt: task.modifiedTime }),
   };
 }
 
@@ -159,7 +178,7 @@ export function createTickTickActionAdapter(
     },
 
     async getState(projectId, externalId) {
-      return toExternal(
+      return toExternalState(
         parseTask(
           await requestJson(
             `${baseUrl}/project/${encodeURIComponent(projectId)}/task/${encodeURIComponent(externalId)}`,
