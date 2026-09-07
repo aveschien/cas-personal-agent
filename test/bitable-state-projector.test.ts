@@ -10,6 +10,7 @@ import {
 } from "../src/bitable-state-projector.js";
 import type { SemanticOperation } from "../src/state-operations.js";
 import { createBitableAuthorityStore } from "../src/bitable-authority-store.js";
+import { createCurrentStateStore } from "../src/current-state-store.js";
 
 test("typed state operations upsert linked Bitable records idempotently", async () => {
   const records = new Map<
@@ -109,13 +110,10 @@ test("typed state operations upsert linked Bitable records idempotently", async 
     状态: ["等待"],
     类型: ["任务"],
     项目: [{ id: project?.recordId }],
-    下一步: null,
-    当前摘要: null,
     在等什么: "张总反馈",
     解除条件: "收到明确反馈",
     检查点: "2026-09-04T09:00:00+08:00",
     "条件/预案": "若无反馈则联系张总",
-    稍后区: false,
     item_key: "proposal-feedback",
     来源事件: "om_projection_1",
     created_by_agent: true,
@@ -157,14 +155,12 @@ test("typed state operations upsert linked Bitable records idempotently", async 
       事项: "处理方案反馈",
       状态: ["可行动"],
       类型: ["任务"],
-      项目: [],
+      项目: [{ id: project?.recordId }],
       下一步: "阅读反馈并决定下一步",
-      当前摘要: null,
       在等什么: null,
       解除条件: null,
       检查点: null,
       "条件/预案": null,
-      稍后区: false,
       item_key: "proposal-feedback",
       来源事件: "om_projection_2",
       created_by_agent: true,
@@ -307,4 +303,111 @@ test("a newer manual Bitable correction is not overwritten by a stale projection
 
   store.close();
   await rm(directory, { recursive: true, force: true });
+});
+
+test("an explicit reopen wins after a manual completion and an older waiting replay cannot undo it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-projector-versioned-"));
+  const databasePath = join(directory, "events.sqlite");
+  const authority = createBitableAuthorityStore(databasePath);
+  const currentState = createCurrentStateStore(databasePath);
+  const fields: Record<string, unknown> = {
+    item_key: "proposal-feedback",
+    事项: "院方报价反馈",
+    状态: ["等待"],
+    类型: ["任务"],
+    项目: [],
+    下一步: "整理反馈",
+    当前摘要: "报价已发出",
+    在等什么: "院方回复",
+    解除条件: "收到意见",
+    检查点: null,
+    "条件/预案": null,
+    稍后区: false,
+  };
+  authority.saveSnapshot({
+    tableId: "tbl_items",
+    recordId: "rec_item",
+    stableKey: "proposal-feedback",
+    fields,
+    projectedAt: "2026-09-07T01:00:00.000Z",
+  });
+  const projector = createBitableStateProjector({
+    client: {
+      findByKey: async (tableId) => tableId === "tbl_items"
+        ? { recordId: "rec_item", fields: { ...fields } }
+        : undefined,
+      create: async () => { throw new Error("not used"); },
+      update: async (_tableId, _recordId, update) => { Object.assign(fields, update); },
+    },
+    tables: { projects: "tbl_projects", items: "tbl_items", actionLinks: "tbl_actions" },
+    reminders: { schedule: async () => undefined },
+    authority,
+    currentState,
+  });
+  try {
+    await projector.project({
+      sourceEventId: "event-waiting",
+      occurredAt: "2026-09-07T01:00:00.000Z",
+      operations: [{
+        kind: "upsert_item",
+        itemKey: "proposal-feedback",
+        title: "院方报价反馈",
+        type: "task",
+        status: "waiting",
+        nextAction: "整理反馈",
+        summary: "报价已发出",
+      }, {
+        kind: "set_waiting",
+        itemKey: "proposal-feedback",
+        waitingFor: "院方回复",
+        releaseCondition: "收到意见",
+      }],
+    });
+    fields.状态 = ["完成"];
+    currentState.apply({
+      sourceKind: "external_correction",
+      sourceEventId: "manual-complete",
+      occurredAt: "2026-09-07T02:00:00.000Z",
+      baseRevisions: { "item:proposal-feedback": 1 },
+      operations: [{
+        kind: "upsert_item",
+        itemKey: "proposal-feedback",
+        title: "院方报价反馈",
+        type: "task",
+        status: "completed",
+      }],
+    });
+
+    await projector.project({
+      sourceEventId: "event-reopen",
+      occurredAt: "2026-09-07T03:00:00.000Z",
+      operations: [{
+        kind: "upsert_item",
+        itemKey: "proposal-feedback",
+        title: "院方报价反馈",
+        type: "task",
+        status: "in_progress",
+      }],
+    });
+    assert.deepEqual(fields.状态, ["进行中"]);
+    assert.equal(fields.下一步, "整理反馈");
+    assert.equal(fields.当前摘要, "报价已发出");
+
+    await projector.project({
+      sourceEventId: "event-waiting",
+      occurredAt: "2026-09-07T01:00:00.000Z",
+      operations: [{
+        kind: "upsert_item",
+        itemKey: "proposal-feedback",
+        title: "院方报价反馈",
+        type: "task",
+        status: "waiting",
+      }],
+    });
+    assert.deepEqual(fields.状态, ["进行中"]);
+  } finally {
+    currentState.close();
+    authority.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

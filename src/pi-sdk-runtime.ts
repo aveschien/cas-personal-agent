@@ -58,6 +58,7 @@ trustedContext.authoritativeActions 若存在，是本回合刚从滴答或飞�
 trustedContext.authoritativeProjects 和 authoritativeItems 若存在，是本回合刚从飞书多维表格读取的项目与事项当前状态；其中 correctedFields 表示用户在表格中的人工修改。它们优先于 recalledMemories、旧对话和旧推断。除非 userMessage 在本回合明确要求再次变更，否则不得生成会把这些字段改回旧值的操作。
 trustedContext.attention 若存在，是 Supervisor 从权威当前状态按确定性规则计算的注意力上下文。queryKind=now 时只解释 currentAttention，不补充或编造其它优先事项；queryKind=waiting 时如实说明 waiting 及 missingCheckpoint，不编造日期；queryKind=continue 时用 continuation 恢复项目、未闭环事项、等待和唯一 nextAction，存在 continuationCandidates 时只做最小澄清。纯查询不得生成状态写操作。cognitiveMode=explore 时不要机械拉回 activeFocus；cognitiveMode=execute 且出现 activeFocus 时，保存新话题后用一句话带回当前最小闭环。
 把一条混合输入拆成零到多条 state_apply_operation 调用，并保持多轮上下文连续。
+upsert 是部分更新：省略可选字段表示保留当前值；只有用户明确要求清空或解除关联时才把该字段设为 null。不得因为本轮没有提到项目、下一步或摘要就清空它们。
 事项的 type 与 status 正交：探索性内容用 park_idea；等待用 upsert_item 后接 set_waiting；个人行动只生成 plan_action；有明确起止时间的会议用 create_scheduled_event；检查点用 schedule_checkpoint，不能当成 deadline。
 Project.phase 只能是需求沟通、方案、报价、审批、实施、验收、日常运营、个人计划之一；没有合适选项时省略，不能生成新的阶段文本。
 尚未触发的“若 X 则 Y”只能写入 set_waiting.contingency，不能提前生成 plan_action。
@@ -160,11 +161,14 @@ const productionSdkFactory: PiSdkSessionFactory = {
           Type.Literal("paused"),
           Type.Literal("finished"),
         ]),
-        goal: Type.Optional(Type.String()),
+        goal: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         phase: Type.Optional(
-          Type.Union(projectPhases.map((phase) => Type.Literal(phase))),
+          Type.Union([
+            ...projectPhases.map((phase) => Type.Literal(phase)),
+            Type.Null(),
+          ]),
         ),
-        summary: Type.Optional(Type.String()),
+        summary: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       }),
       Type.Object({
         kind: Type.Literal("upsert_item"),
@@ -172,24 +176,24 @@ const productionSdkFactory: PiSdkSessionFactory = {
         title: Type.String({ minLength: 1 }),
         type: itemTypes,
         status: itemStatuses,
-        projectKey: Type.Optional(stableKey),
-        nextAction: Type.Optional(Type.String()),
-        summary: Type.Optional(Type.String()),
+        projectKey: Type.Optional(Type.Union([stableKey, Type.Null()])),
+        nextAction: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        summary: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       }),
       Type.Object({
         kind: Type.Literal("set_waiting"),
         itemKey: stableKey,
         waitingFor: Type.String({ minLength: 1 }),
         releaseCondition: Type.String({ minLength: 1 }),
-        checkpointAt: Type.Optional(timestamp),
-        contingency: Type.Optional(Type.String()),
+        checkpointAt: Type.Optional(Type.Union([timestamp, Type.Null()])),
+        contingency: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       }),
       Type.Object({
         kind: Type.Literal("park_idea"),
         itemKey: stableKey,
         title: Type.String({ minLength: 1 }),
-        projectKey: Type.Optional(stableKey),
-        summary: Type.Optional(Type.String()),
+        projectKey: Type.Optional(Type.Union([stableKey, Type.Null()])),
+        summary: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       }),
       Type.Object({
         kind: Type.Literal("plan_action"),

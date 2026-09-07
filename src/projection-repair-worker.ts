@@ -30,6 +30,7 @@ interface RepairPayload {
   readonly maxAttempts: number;
   readonly repair: {
     readonly sourceEventId: string;
+    readonly occurredAt?: string;
     readonly changes: readonly SemanticOperation[];
   };
 }
@@ -115,6 +116,9 @@ export function createProjectionRepairWorker(
         payload = parsePayload(row.payload_json);
         await options.projector.project({
           sourceEventId: payload.repair.sourceEventId,
+          ...(payload.repair.occurredAt === undefined
+            ? {}
+            : { occurredAt: payload.repair.occurredAt }),
           operations: payload.repair.changes,
         });
         database.exec("BEGIN IMMEDIATE");

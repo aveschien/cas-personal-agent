@@ -158,6 +158,7 @@ export function createDevelopmentAgent(
           JSON.stringify(interpretation),
           JSON.stringify({
             sourceEventId: event.sourceMessageId,
+            occurredAt: event.receivedAt,
             changes: interpretation.changes,
           }),
           message,

@@ -40,7 +40,7 @@ test("the development service reports healthy storage and preserves Events acros
       mode: "development",
       storage: {
         journalMode: "wal",
-        schemaVersion: 3,
+        schemaVersion: 4,
       },
     });
     assert.equal(

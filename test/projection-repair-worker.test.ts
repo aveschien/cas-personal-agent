@@ -56,6 +56,7 @@ test("a queued Bitable repair completes the degraded Event exactly once", async 
     assert.deepEqual(projections, [
       {
         sourceEventId: "om_repair_worker",
+        occurredAt: "2026-09-02T18:00:00.000Z",
         operations: [operation],
       },
     ]);

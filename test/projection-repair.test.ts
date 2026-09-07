@@ -55,6 +55,7 @@ test("a Bitable projection failure degrades the Event and queues one bounded rep
       maxAttempts: 5,
       payload: {
         sourceEventId: "message-projection-repair",
+        occurredAt: "2026-09-02T17:25:00.000Z",
         changes: [change],
       },
       lastError: "Bitable unavailable",

@@ -66,6 +66,7 @@ import { isSemanticOperation } from "./state-operations.js";
 import { createSupervisor } from "./supervisor.js";
 import { createTickTickActionAdapter } from "./ticktick-action-adapter.js";
 import { createFocusStateStore } from "./focus-state-store.js";
+import { createCurrentStateStore } from "./current-state-store.js";
 
 export interface LiveServiceConfig {
   readonly cwd: string;
@@ -144,6 +145,7 @@ export async function createLiveService(
   const onError =
     dependencies.onError ?? ((error: unknown) => console.error(error));
   const registry = createPiSessionRegistry(config.databasePath);
+  const currentStateStore = createCurrentStateStore(config.databasePath);
   const collaborativeActionsEnabled =
     config.collaborativeActions?.enabled === true;
   const collaboratorResolver = collaborativeActionsEnabled
@@ -162,6 +164,7 @@ export async function createLiveService(
       ...(collaboratorResolver === undefined ? {} : { collaboratorResolver }),
     });
   } catch (error) {
+    currentStateStore.close();
     registry.close();
     throw error;
   }
@@ -233,7 +236,7 @@ export async function createLiveService(
             : { collaborative: { adapter: collaborativeActionAdapter } }),
           onError,
         }));
-  const authoritativeBitable =
+  const remoteBitable =
     dependencies.authoritativeBitableReader ??
     (bitableClient === undefined || bitableAuthorityStore === undefined
       ? undefined
@@ -242,6 +245,41 @@ export async function createLiveService(
           tables: config.bitableTables,
           store: bitableAuthorityStore,
         }));
+  if (dependencies.authoritativeBitableReader === undefined && remoteBitable !== undefined) {
+    try {
+      const observedAt = dependencies.clock?.() ?? new Date().toISOString();
+      const [reconciliation, actionRecords] = await Promise.all([
+        remoteBitable.reconcile(observedAt),
+        bitableClient?.list(config.bitableTables.actionLinks, [
+          "action_key",
+          "行动",
+          "行动类型",
+          "事实源",
+          "所属事项",
+          "所属项目",
+          "负责人",
+          "assignee_id",
+          "deadline",
+          "开始时间",
+          "结束时间",
+          "外部对象 ID",
+          "外部状态镜像",
+          "最近同步",
+        ]) ?? Promise.resolve([]),
+      ]);
+      currentStateStore.importBitable(
+        reconciliation,
+        observedAt,
+        actionRecords,
+      );
+    } catch (error) {
+      onError(error);
+    }
+  }
+  const authoritativeBitable =
+    dependencies.authoritativeBitableReader ?? {
+      reconcile: async () => currentStateStore.read(),
+    };
   const currentAttention =
     dependencies.currentAttentionResolver ??
     (bitableClient === undefined || focusStateStore === undefined
@@ -282,6 +320,7 @@ export async function createLiveService(
       ...(bitableAuthorityStore === undefined
         ? {}
         : { authority: bitableAuthorityStore }),
+      currentState: currentStateStore,
       ...(actionOutbox === undefined && collaborativeActionOutbox === undefined
         ? {}
         : {
@@ -317,10 +356,27 @@ export async function createLiveService(
         if (!changes.every(isSemanticOperation)) {
           throw new Error("Pi returned a non-semantic production state change");
         }
-        await stateProjector.project({
-          sourceEventId: context.sourceEventId,
-          operations: changes,
-        });
+        if (!ownsStateProjector) {
+          currentStateStore.apply({
+            sourceKind: "user_intent",
+            sourceEventId: context.sourceEventId,
+            occurredAt: context.receivedAt,
+            operations: changes,
+          });
+        }
+        try {
+          await stateProjector.project({
+            sourceEventId: context.sourceEventId,
+            occurredAt: context.receivedAt,
+            operations: changes,
+          });
+        } catch (error) {
+          currentStateStore.markProjectionFailed(
+            context.sourceEventId,
+            new Date().toISOString(),
+          );
+          throw error;
+        }
       },
     },
     memoryRetentionEnabled: config.memory.enabled,
@@ -359,6 +415,7 @@ export async function createLiveService(
           actions: personalActionAdapter!,
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
+          currentState: currentStateStore,
         });
   const collaborativeActionWorker =
     collaborativeActionOutbox === undefined || bitableClient === undefined
@@ -368,6 +425,7 @@ export async function createLiveService(
           actions: collaborativeActionAdapter!,
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
+          currentState: currentStateStore,
         });
   const channel = dependencies.channel ?? createLarkEventChannel();
   const replies = dependencies.replies ?? createLarkReplyAdapter();
@@ -481,6 +539,7 @@ export async function createLiveService(
         reminderWorker?.close();
         bitableAuthorityStore?.close();
         focusStateStore?.close();
+        currentStateStore.close();
       }
     },
   };

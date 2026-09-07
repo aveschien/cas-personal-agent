@@ -33,9 +33,9 @@ export interface UpsertProjectOperation {
   readonly projectKey: string;
   readonly name: string;
   readonly status: ProjectStatus;
-  readonly goal?: string;
-  readonly phase?: ProjectPhase;
-  readonly summary?: string;
+  readonly goal?: string | null;
+  readonly phase?: ProjectPhase | null;
+  readonly summary?: string | null;
 }
 
 export interface UpsertItemOperation {
@@ -44,9 +44,9 @@ export interface UpsertItemOperation {
   readonly title: string;
   readonly type: ItemType;
   readonly status: ItemStatus;
-  readonly projectKey?: string;
-  readonly nextAction?: string;
-  readonly summary?: string;
+  readonly projectKey?: string | null;
+  readonly nextAction?: string | null;
+  readonly summary?: string | null;
 }
 
 export interface SetWaitingOperation {
@@ -54,16 +54,16 @@ export interface SetWaitingOperation {
   readonly itemKey: string;
   readonly waitingFor: string;
   readonly releaseCondition: string;
-  readonly checkpointAt?: string;
-  readonly contingency?: string;
+  readonly checkpointAt?: string | null;
+  readonly contingency?: string | null;
 }
 
 export interface ParkIdeaOperation {
   readonly kind: "park_idea";
   readonly itemKey: string;
   readonly title: string;
-  readonly projectKey?: string;
-  readonly summary?: string;
+  readonly projectKey?: string | null;
+  readonly summary?: string | null;
 }
 
 export interface PlanActionOperation {
@@ -137,9 +137,9 @@ export interface ProjectProjection {
   readonly key: string;
   readonly name: string;
   readonly status: ProjectStatus;
-  readonly goal?: string;
-  readonly phase?: ProjectPhase;
-  readonly summary?: string;
+  readonly goal?: string | null;
+  readonly phase?: ProjectPhase | null;
+  readonly summary?: string | null;
   readonly sourceEventId: string;
 }
 
@@ -148,13 +148,13 @@ export interface ItemProjection {
   readonly title: string;
   readonly type: ItemType;
   readonly status: ItemStatus;
-  readonly projectKey?: string;
-  readonly nextAction?: string;
-  readonly summary?: string;
+  readonly projectKey?: string | null;
+  readonly nextAction?: string | null;
+  readonly summary?: string | null;
   readonly waitingFor?: string;
   readonly releaseCondition?: string;
-  readonly checkpointAt?: string;
-  readonly contingency?: string;
+  readonly checkpointAt?: string | null;
+  readonly contingency?: string | null;
   readonly parked?: true;
   readonly sourceEventId: string;
 }
@@ -199,6 +199,7 @@ export interface BitableProjectionPlan {
 
 export interface CompileBitableProjectionInput {
   readonly sourceEventId: string;
+  readonly occurredAt?: string;
   readonly operations: readonly SemanticOperation[];
 }
 
@@ -288,8 +289,8 @@ export function compileBitableProjection(
           throw new Error(`set_waiting references unknown Item ${operation.itemKey}`);
         }
         const checkpointAt =
-          operation.checkpointAt === undefined
-            ? undefined
+          operation.checkpointAt === undefined || operation.checkpointAt === null
+            ? operation.checkpointAt
             : normalizeBusinessTimestamp(
                 operation.checkpointAt,
                 "checkpointAt",
@@ -420,7 +421,7 @@ export function compileBitableProjection(
         addReminder({
           key: operation.reminderKey,
           itemKey: operation.itemKey,
-          ...(item?.projectKey === undefined
+          ...(item?.projectKey === undefined || item.projectKey === null
             ? {}
             : { projectKey: item.projectKey }),
           title: item?.title ?? operation.itemKey,
@@ -440,6 +441,7 @@ export function compileBitableProjection(
   for (const item of items.values()) {
     if (
       item.checkpointAt !== undefined &&
+      item.checkpointAt !== null &&
       ![...reminders.values()].some(
         (reminder) =>
           reminder.kind === "checkpoint" &&

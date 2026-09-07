@@ -1,9 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const schemaVersion = 3;
+const schemaVersion = 4;
 const requiredTables = [
   "bitable_authoritative_corrections",
   "bitable_projection_snapshots",
+  "current_action_links",
+  "current_items",
+  "current_projects",
+  "current_state_versions",
   "events",
   "focus_state",
   "message_inbox",
@@ -179,6 +183,114 @@ export function initializeStorage(database: DatabaseSync): void {
       changed_fields_json TEXT NOT NULL,
       observed_at TEXT NOT NULL
     ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS current_projects (
+      project_key TEXT PRIMARY KEY,
+      record_id TEXT,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('tracking', 'paused', 'finished')),
+      goal TEXT,
+      phase TEXT,
+      summary TEXT,
+      revision INTEGER NOT NULL,
+      source_kind TEXT NOT NULL CHECK (
+        source_kind IN ('migration', 'user_intent', 'external_correction', 'execution_result')
+      ),
+      source_event_id TEXT NOT NULL,
+      source_occurred_at TEXT NOT NULL,
+      projection_status TEXT NOT NULL CHECK (
+        projection_status IN ('local_only', 'pending', 'confirmed', 'failed')
+      ),
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS current_items (
+      item_key TEXT PRIMARY KEY,
+      record_id TEXT,
+      title TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (
+        type IN ('task', 'idea', 'question', 'decision', 'information')
+      ),
+      status TEXT NOT NULL CHECK (
+        status IN ('inbox', 'actionable', 'in_progress', 'waiting', 'scheduled',
+                   'completed', 'abandoned', 'archived')
+      ),
+      project_key TEXT,
+      next_action TEXT,
+      summary TEXT,
+      waiting_for TEXT,
+      release_condition TEXT,
+      checkpoint_at TEXT,
+      contingency TEXT,
+      parked INTEGER NOT NULL DEFAULT 0 CHECK (parked IN (0, 1)),
+      revision INTEGER NOT NULL,
+      source_kind TEXT NOT NULL CHECK (
+        source_kind IN ('migration', 'user_intent', 'external_correction', 'execution_result')
+      ),
+      source_event_id TEXT NOT NULL,
+      source_occurred_at TEXT NOT NULL,
+      projection_status TEXT NOT NULL CHECK (
+        projection_status IN ('local_only', 'pending', 'confirmed', 'failed')
+      ),
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS current_items_project_idx
+      ON current_items (project_key, status);
+
+    CREATE TABLE IF NOT EXISTS current_action_links (
+      action_key TEXT PRIMARY KEY,
+      record_id TEXT,
+      item_key TEXT NOT NULL,
+      project_key TEXT,
+      title TEXT NOT NULL,
+      action_type TEXT NOT NULL CHECK (
+        action_type IN ('personal_action', 'collaborative_commitment', 'scheduled_event')
+      ),
+      fact_owner TEXT NOT NULL CHECK (
+        fact_owner IN ('ticktick', 'feishu_task', 'bitable')
+      ),
+      assignee TEXT,
+      assignee_id TEXT,
+      deadline_at TEXT,
+      start_at TEXT,
+      end_at TEXT,
+      external_object_id TEXT,
+      execution_status TEXT NOT NULL CHECK (
+        execution_status IN ('requested', 'confirmed', 'failed', 'unknown')
+      ),
+      revision INTEGER NOT NULL,
+      source_kind TEXT NOT NULL CHECK (
+        source_kind IN ('migration', 'user_intent', 'external_correction', 'execution_result')
+      ),
+      source_event_id TEXT NOT NULL,
+      source_occurred_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS current_action_links_item_idx
+      ON current_action_links (item_key);
+
+    CREATE TABLE IF NOT EXISTS current_state_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'item', 'action_link')),
+      entity_key TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      source_kind TEXT NOT NULL CHECK (
+        source_kind IN ('migration', 'user_intent', 'external_correction', 'execution_result')
+      ),
+      source_event_id TEXT NOT NULL,
+      source_occurred_at TEXT NOT NULL,
+      base_revision INTEGER,
+      change_json TEXT NOT NULL,
+      applied INTEGER NOT NULL CHECK (applied IN (0, 1)),
+      rejection_reason TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (source_kind, source_event_id, entity_type, entity_key)
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS current_state_versions_entity_idx
+      ON current_state_versions (entity_type, entity_key, revision);
 
     INSERT OR IGNORE INTO schema_migrations (version, applied_at)
     VALUES (${schemaVersion}, CURRENT_TIMESTAMP);

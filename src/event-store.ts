@@ -304,6 +304,7 @@ export function createEventStore(databasePath: string): EventStore {
             ON CONFLICT(idempotency_key) DO UPDATE SET
               payload_json = excluded.payload_json,
               status = 'retry',
+              attempt_count = MAX(outbox.attempt_count, excluded.attempt_count),
               next_attempt_at = excluded.next_attempt_at,
               last_error_json = excluded.last_error_json,
               updated_at = excluded.updated_at`,

@@ -6,6 +6,7 @@ import type {
 } from "./action.js";
 import type { BitableRecordClient } from "./bitable-state-projector.js";
 import { initializeStorage } from "./storage.js";
+import type { CurrentStateStore } from "./current-state-store.js";
 
 export interface CollaborativeActionWorkerOptions {
   readonly databasePath: string;
@@ -13,6 +14,7 @@ export interface CollaborativeActionWorkerOptions {
   readonly bitable: BitableRecordClient;
   readonly actionLinksTableId: string;
   readonly retryDelayMs?: number;
+  readonly currentState?: CurrentStateStore;
 }
 
 export interface CollaborativeActionWorker {
@@ -118,6 +120,13 @@ export function createCollaborativeActionWorker(
       try {
         payload = parsePayload(row.payload_json);
         const created = await options.actions.create(payload.request);
+        options.currentState?.recordActionExecution({
+          actionKey: payload.request.actionKey,
+          sourceEventId: payload.request.sourceEventId,
+          occurredAt: created.updatedAt ?? now,
+          externalObjectId: created.externalId,
+          status: "confirmed",
+        });
         await options.bitable.update(
           options.actionLinksTableId,
           payload.actionLinkRecordId,
@@ -162,6 +171,14 @@ export function createCollaborativeActionWorker(
             row.id,
           );
         if (payload !== undefined) {
+          if (status === "dead") {
+            options.currentState?.recordActionExecution({
+              actionKey: payload.request.actionKey,
+              sourceEventId: payload.request.sourceEventId,
+              occurredAt: now,
+              status: "failed",
+            });
+          }
           try {
             await options.bitable.update(
               options.actionLinksTableId,

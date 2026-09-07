@@ -18,6 +18,7 @@ import {
   authoritativeItemFields,
   authoritativeProjectFields,
 } from "./authoritative-bitable-reader.js";
+import type { CurrentStateStore } from "./current-state-store.js";
 
 export interface BitableRecord {
   readonly recordId: string;
@@ -87,6 +88,7 @@ export interface BitableStateProjectorOptions {
   readonly reminders: ReminderProjectionSink;
   readonly actions?: ActionProjectionSink;
   readonly authority?: BitableAuthorityStore;
+  readonly currentState?: CurrentStateStore;
   readonly clock?: () => string;
 }
 
@@ -142,9 +144,13 @@ function projectFields(project: ProjectProjection): Record<string, unknown> {
     last_effective_event_id: project.sourceEventId,
     created_by_agent: true,
     ...(project.goal === undefined ? {} : { 目标: project.goal }),
-    ...(project.phase === undefined || !validProjectPhases.has(project.phase)
+    ...(project.phase === undefined
       ? {}
-      : { 阶段: [project.phase] }),
+      : project.phase === null
+        ? { 阶段: [] }
+        : !validProjectPhases.has(project.phase)
+          ? {}
+          : { 阶段: [project.phase] }),
     ...(project.summary === undefined ? {} : { 当前摘要: project.summary }),
   };
 }
@@ -159,7 +165,9 @@ function itemFields(
     类型: [itemType[item.type]],
     ...(projectRecordId === undefined
       ? {}
-      : { 项目: [{ id: projectRecordId }] }),
+      : projectRecordId === null
+        ? { 项目: [] }
+        : { 项目: [{ id: projectRecordId }] }),
     ...(item.nextAction === undefined ? {} : { 下一步: item.nextAction }),
     ...(item.summary === undefined ? {} : { 当前摘要: item.summary }),
     ...(item.waitingFor === undefined ? {} : { 在等什么: item.waitingFor }),
@@ -187,6 +195,7 @@ async function upsert(
   authority?: BitableAuthorityStore,
   authoritativeFields: readonly string[] = [],
   now = new Date().toISOString(),
+  protectManualEdits = true,
 ): Promise<BitableRecord> {
   const existing = await client.findByKey(
     tableId,
@@ -208,7 +217,7 @@ async function upsert(
   const currentFields = { ...clearFields, ...fields };
   const snapshot = authority?.getSnapshot(tableId, key);
   const protectedFields = new Set(
-    snapshot === undefined
+    !protectManualEdits || snapshot === undefined
       ? []
       : authoritativeFields.filter(
           (field) =>
@@ -234,21 +243,11 @@ async function upsert(
   };
 }
 
-const clearedProjectFields = {
-  目标: null,
-  阶段: [],
-  当前摘要: null,
-} as const;
-
-const clearedItemFields = {
-  项目: [],
-  下一步: null,
-  当前摘要: null,
+const clearedWaitingFields = {
   在等什么: null,
   解除条件: null,
   检查点: null,
   "条件/预案": null,
-  稍后区: false,
 } as const;
 
 const clearedActionFields = {
@@ -265,8 +264,13 @@ export function createBitableStateProjector(
   const clock = options.clock ?? (() => new Date().toISOString());
   return {
     async project(input) {
-      const plan = compileBitableProjection(input);
       const projectedAt = clock();
+      const plan = options.currentState?.apply({
+        sourceKind: "user_intent",
+        sourceEventId: input.sourceEventId,
+        occurredAt: input.occurredAt ?? projectedAt,
+        operations: input.operations,
+      }) ?? compileBitableProjection(input);
       const projectRecordIds = new Map<string, string>();
       const itemRecordIds = new Map<string, string>();
 
@@ -277,18 +281,25 @@ export function createBitableStateProjector(
           "project_key",
           project.key,
           projectFields(project),
-          clearedProjectFields,
+          {},
           options.authority,
           authoritativeProjectFields,
+          projectedAt,
+          options.currentState === undefined,
+        );
+        options.currentState?.bindRecord(
+          "project",
+          project.key,
+          record.recordId,
           projectedAt,
         );
         projectRecordIds.set(project.key, record.recordId);
       }
 
       const resolveProject = async (
-        key: string | undefined,
+        key: string | null | undefined,
       ): Promise<string | undefined> => {
-        if (key === undefined) {
+        if (key === undefined || key === null) {
           return undefined;
         }
         const known = projectRecordIds.get(key);
@@ -315,9 +326,16 @@ export function createBitableStateProjector(
           "item_key",
           item.key,
           itemFields(item, projectRecordId),
-          clearedItemFields,
+          item.status === "waiting" ? {} : clearedWaitingFields,
           options.authority,
           authoritativeItemFields,
+          projectedAt,
+          options.currentState === undefined,
+        );
+        options.currentState?.bindRecord(
+          "item",
+          item.key,
+          record.recordId,
           projectedAt,
         );
         itemRecordIds.set(item.key, record.recordId);
@@ -372,6 +390,12 @@ export function createBitableStateProjector(
           fields,
           clearedActionFields,
         );
+        options.currentState?.bindRecord(
+          "action_link",
+          action.key,
+          actionRecord.recordId,
+          projectedAt,
+        );
         await options.actions?.schedule(
           action,
           actionRecord.recordId,
@@ -387,6 +411,10 @@ export function createBitableStateProjector(
           await resolveProject(reminder.projectKey),
         );
       }
+      options.currentState?.markProjectionSucceeded(
+        input.sourceEventId,
+        projectedAt,
+      );
     },
   };
 }
