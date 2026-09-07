@@ -96,6 +96,9 @@ test("attention query classification stays narrow", () => {
   assert.equal(classifyAttentionQuery("我在等什么"), "waiting");
   assert.equal(classifyAttentionQuery("继续那个项目"), "continue");
   assert.equal(classifyAttentionQuery("继续开发"), "continue");
+  assert.equal(classifyAttentionQuery("今天有啥要忙"), "now");
+  assert.equal(classifyAttentionQuery("手头有哪些事"), "now");
+  assert.equal(classifyAttentionQuery("接着上次那个报价聊"), "continue");
   assert.equal(classifyAttentionQuery("记录一个新想法"), undefined);
 });
 

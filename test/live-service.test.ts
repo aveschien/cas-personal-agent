@@ -56,11 +56,14 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
           replies.push(request.text);
         },
       },
-      runtimeFactory: async () => ({
-        sessionId: "pi-live-session-1",
-        sessionPath: join(directory, "pi-live-session-1.jsonl"),
-        runTurn: async (prompt) => ({
-          changes: [
+      runtimeFactory: async ({ contextTools }) => {
+        assert.deepEqual(await contextTools?.queryLocal({ entity: "project", limit: 3 }), { results: [] });
+        assert.deepEqual(await contextTools?.refreshAction("missing-action"), { refreshed: false, reason: "unknown action or no external object" });
+        return {
+          sessionId: "pi-live-session-1",
+          sessionPath: join(directory, "pi-live-session-1.jsonl"),
+          runTurn: async (prompt) => ({
+            changes: [
             {
               kind: "upsert_item",
               itemKey: "live-service-item",
@@ -68,13 +71,12 @@ test("the live service wires a persistent Pi runtime to the Lark Supervisor", as
               type: "task",
               status: "actionable",
             },
-          ],
-          acknowledgement: `Pi 回复：${prompt}`,
-        }),
-        dispose: () => {
-          runtimeDisposed = true;
-        },
-      }),
+            ],
+            acknowledgement: `Pi 回复：${prompt}`,
+          }),
+          dispose: () => { runtimeDisposed = true; },
+        };
+      },
       stateProjector: {
         project: async () => undefined,
       },

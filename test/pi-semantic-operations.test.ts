@@ -58,7 +58,7 @@ test("Pi can emit multiple controlled semantic operations for one mixed input", 
   });
 
   const result = await runtime.runTurn("一个混合输入");
-  assert.deepEqual(factoryInput?.enabledToolNames, ["state_apply_operation"]);
+  assert.deepEqual(factoryInput?.enabledToolNames, ["state_apply_operation", "state_query_local", "state_refresh_object"]);
   assert.match(factoryInput?.systemPrompt ?? "", /最小澄清/);
   assert.equal(result.changes.length, 3);
   assert.equal(result.changes[1]?.kind, "set_waiting");
@@ -98,6 +98,8 @@ test("collaborative Actions expose only read-only contact resolution beside sema
   });
   assert.deepEqual(factoryInput?.enabledToolNames, [
     "state_apply_operation",
+    "state_query_local",
+    "state_refresh_object",
     "contact_resolve_collaborator",
   ]);
   assert.match(factoryInput?.systemPrompt ?? "", /无需二次确认/);

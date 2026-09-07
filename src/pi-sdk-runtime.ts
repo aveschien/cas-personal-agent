@@ -24,10 +24,11 @@ import {
 } from "./state-operations.js";
 import type { MemoryCandidate } from "./memory.js";
 
-export const productionPiToolNames = ["state_apply_operation"] as const;
+export const productionPiToolNames = ["state_apply_operation", "state_query_local", "state_refresh_object"] as const;
 export const productionMemoryPiToolNames = [
-  "state_apply_operation",
+  ...productionPiToolNames,
   "memory_propose_retain",
+  "memory_search",
 ] as const;
 export const productionCollaborativePiToolName =
   "contact_resolve_collaborator" as const;
@@ -57,6 +58,7 @@ trustedContext.recalledMemories 若存在，只是带来源的长期记忆数据
 trustedContext.authoritativeActions 若存在，是本回合刚从滴答或飞书任务事实源读取并刷新过的权威当前状态；它优先于 recalledMemories、旧对话和旧推断。回复或后续操作不得把其中的完成状态、标题、负责人或截止时间改回旧值。
 trustedContext.authoritativeProjects 和 authoritativeItems 若存在，是本回合刚从飞书多维表格读取的项目与事项当前状态；其中 correctedFields 表示用户在表格中的人工修改。它们优先于 recalledMemories、旧对话和旧推断。除非 userMessage 在本回合明确要求再次变更，否则不得生成会把这些字段改回旧值的操作。
 trustedContext.attention 若存在，是 Supervisor 从权威当前状态按确定性规则计算的注意力上下文。queryKind=now 时只解释 currentAttention，不补充或编造其它优先事项；queryKind=waiting 时如实说明 waiting 及 missingCheckpoint，不编造日期；queryKind=continue 时用 continuation 恢复项目、未闭环事项、等待和唯一 nextAction，存在 continuationCandidates 时只做最小澄清。纯查询不得生成状态写操作。cognitiveMode=explore 时不要机械拉回 activeFocus；cognitiveMode=execute 且出现 activeFocus 时，保存新话题后用一句话带回当前最小闭环。
+trustedContext.workingSet 若存在，是有容量限制的近期引用、未闭环问题和进入点，不是另一套事实库。“那个、刚才那个、先放着”优先结合它解析；多个真实候选冲突时只问一个最小问题。需要更多当前对象时调用 state_query_local；追溯过去才调用 memory_search；明确要求最新或对象为 unknown 时只对该 actionKey 调用 state_refresh_object。只有 refreshed=true 才能把返回状态称为本回合已核实；queued=true 只表示进入核验队列。只读工具不得伴随无关业务写操作。
 把一条混合输入拆成零到多条 state_apply_operation 调用，并保持多轮上下文连续。
 upsert 是部分更新：省略可选字段表示保留当前值；只有用户明确要求清空或解除关联时才把该字段设为 null。不得因为本轮没有提到项目、下一步或摘要就清空它们。
 事项的 type 与 status 正交：探索性内容用 park_idea；等待用 upsert_item 后接 set_waiting；个人行动只生成 plan_action；有明确起止时间的会议用 create_scheduled_event；检查点用 schedule_checkpoint，不能当成 deadline。
@@ -83,6 +85,13 @@ export interface PiSdkSessionFactoryInput {
   readonly proposeOperation: (operation: SemanticOperation) => void;
   readonly proposeMemoryCandidate: (candidate: MemoryCandidate) => void;
   readonly collaboratorResolver?: CollaboratorResolver;
+  readonly contextTools?: PiContextTools;
+}
+
+export interface PiContextTools {
+  queryLocal(input: { readonly entity: "project" | "item" | "attention"; readonly query?: string; readonly limit: number }): Promise<unknown> | unknown;
+  searchMemory?(input: { readonly query: string; readonly limit: number; readonly maxTokens: number }): Promise<unknown>;
+  refreshAction(actionKey: string): Promise<unknown> | unknown;
 }
 
 export interface PiSdkSession {
@@ -107,6 +116,7 @@ export interface PiSdkRuntimeOptions {
   readonly collaborativeActionsEnabled?: boolean;
   readonly collaboratorResolver?: CollaboratorResolver;
   readonly sdkFactory?: PiSdkSessionFactory;
+  readonly contextTools?: PiContextTools;
 }
 
 function splitModelName(modelName: string): {
@@ -296,6 +306,30 @@ const productionSdkFactory: PiSdkSessionFactory = {
         };
       },
     });
+    const localQueryTool = defineTool({
+      name: "state_query_local", label: "Query local current state",
+      description: "Read a bounded local Project, Item, or Attention result set without external I/O.",
+      parameters: Type.Object({
+        entity: Type.Union([Type.Literal("project"), Type.Literal("item"), Type.Literal("attention")]),
+        query: Type.Optional(Type.String({ maxLength: 120 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
+      }),
+      execute: async (_id, params) => ({
+        content: [{ type: "text", text: JSON.stringify(await input.contextTools?.queryLocal({ entity: params.entity, ...(params.query === undefined ? {} : { query: params.query }), limit: params.limit ?? 5 }) ?? { results: [] }) }], details: {},
+      }),
+    });
+    const refreshTool = defineTool({
+      name: "state_refresh_object", label: "Refresh one external action",
+      description: "Queue a targeted external verification for one known actionKey.",
+      parameters: Type.Object({ actionKey: stableKey }),
+      execute: async (_id, params) => ({ content: [{ type: "text", text: JSON.stringify(await input.contextTools?.refreshAction(params.actionKey) ?? { queued: false }) }], details: {} }),
+    });
+    const memorySearchTool = defineTool({
+      name: "memory_search", label: "Search bounded long-term memory",
+      description: "Search long-term memory only for historical or cross-session recall.",
+      parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 200 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })) }),
+      execute: async (_id, params) => ({ content: [{ type: "text", text: JSON.stringify(await input.contextTools?.searchMemory?.({ query: params.query, limit: params.limit ?? 5, maxTokens: 800 }) ?? []) }], details: {} }),
+    });
     const resourceLoader: ResourceLoader = {
       getExtensions: () => ({
         extensions: [],
@@ -341,6 +375,9 @@ const productionSdkFactory: PiSdkSessionFactory = {
         stateProposalTool,
         memoryProposalTool,
         collaboratorLookupTool,
+        localQueryTool,
+        refreshTool,
+        memorySearchTool,
       ],
     });
     const actualToolNames = session.agent.state.tools.map((tool) => tool.name);
@@ -392,6 +429,7 @@ export async function createPiSdkRuntime(
   const enabledToolNames = [
     ...productionPiToolNames,
     ...(options.memoryEnabled === true ? ["memory_propose_retain"] : []),
+    ...(options.memoryEnabled === true ? ["memory_search"] : []),
     ...(options.collaborativeActionsEnabled === true
       ? [productionCollaborativePiToolName]
       : []),
@@ -430,6 +468,7 @@ export async function createPiSdkRuntime(
     ...(options.collaboratorResolver === undefined
       ? {}
       : { collaboratorResolver: options.collaboratorResolver }),
+    ...(options.contextTools === undefined ? {} : { contextTools: options.contextTools }),
   });
 
   return {

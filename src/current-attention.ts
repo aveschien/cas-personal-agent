@@ -177,17 +177,17 @@ export function classifyAttentionQuery(
   message: string,
 ): AttentionQueryKind | undefined {
   const compact = message.replace(/\s+/g, "");
-  if (/我在等什么|有哪些等待|现在等什么|等待事项/.test(compact)) {
+  if (/我在等什么|有哪些等待|现在等什么|等待事项|手头有哪些在等|还在等啥/.test(compact)) {
     return "waiting";
   }
   if (
-    /继续(那个|这个|刚才的)?.*项目|继续做|继续开发|继续推进|接着做|恢复.*项目/.test(
+    /继续(那个|这个|刚才的)?.*项目|继续做|继续开发|继续推进|接着做|恢复.*项目|接着(上次|刚才).*聊|继续(上次|刚才).*聊/.test(
       compact,
     )
   ) {
     return "continue";
   }
-  if (/我现在该做什么|现在该做什么|接下来做什么|下一步做什么|现在做什么/.test(compact)) {
+  if (/我现在该做什么|现在该做什么|接下来做什么|下一步做什么|现在做什么|今天有啥要忙|今天忙什么|手头有哪些事|手头有啥事/.test(compact)) {
     return "now";
   }
   return undefined;

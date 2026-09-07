@@ -20,6 +20,7 @@ export interface ExternalActionSyncWorkerOptions {
 export interface ExternalActionSyncWorker {
   runOnce(now?: string): Promise<boolean>;
   requestRefresh(actionKey: string, now?: string): void;
+  refreshNow(actionKey: string, now?: string): Promise<CurrentActionState | undefined>;
 }
 
 function fingerprint(state: ExternalPersonalAction): string {
@@ -83,6 +84,30 @@ export function createExternalActionSyncWorker(
         reason: "explicit_refresh",
         payload: { projectId: options.projectId, externalId: local.externalObjectId },
       }, now);
+    },
+    async refreshNow(actionKey, now = new Date().toISOString()) {
+      this.requestRefresh(actionKey, now);
+      if (!options.queue.begin("ticktick", { projectId: options.projectId, requestBudget: 1, targeted: actionKey }, now)) {
+        return options.currentState.actionStates("ticktick").find((state) => state.actionKey === actionKey);
+      }
+      const claimed = options.queue.claim("ticktick", now, actionKey);
+      if (claimed === undefined) {
+        options.queue.complete("ticktick", undefined, now);
+        return options.currentState.actionStates("ticktick").find((state) => state.actionKey === actionKey);
+      }
+      try {
+        const local = options.currentState.actionStates("ticktick").find((state) => state.actionKey === actionKey);
+        if (local?.externalObjectId === undefined) throw new Error("verification target has no external ID");
+        const external = await bounded(options.personal.getState(options.projectId, local.externalObjectId), timeoutMs);
+        await apply(local, external, now);
+        options.queue.succeed(claimed.id, now);
+        options.queue.complete("ticktick", fingerprint(external), now);
+      } catch (error) {
+        options.queue.fail(claimed.id, error, now);
+        options.queue.failConnector("ticktick", error, now);
+        options.onError?.(error);
+      }
+      return options.currentState.actionStates("ticktick").find((state) => state.actionKey === actionKey);
     },
     async runOnce(now = new Date().toISOString()) {
       if (options.personal.listProjectSnapshot === undefined) return false;

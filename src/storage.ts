@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const schemaVersion = 5;
+const schemaVersion = 6;
 const requiredTables = [
   "bitable_authoritative_corrections",
   "bitable_projection_snapshots",
@@ -18,6 +18,7 @@ const requiredTables = [
   "schema_migrations",
   "session_handoffs",
   "verification_queue",
+  "working_set_entries",
 ] as const;
 
 interface JournalModeRow {
@@ -313,6 +314,21 @@ export function initializeStorage(database: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS verification_queue_ready_idx
       ON verification_queue (connector, status, next_attempt_at, created_at);
+
+    CREATE TABLE IF NOT EXISTS working_set_entries (
+      logical_conversation_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'item', 'question', 'entry_point')),
+      entity_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+      mention_count INTEGER NOT NULL DEFAULT 1,
+      last_mentioned_at TEXT NOT NULL,
+      PRIMARY KEY (logical_conversation_id, entity_type, entity_key)
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS working_set_recent_idx
+      ON working_set_entries (logical_conversation_id, status, last_mentioned_at DESC);
 
     CREATE TABLE IF NOT EXISTS current_state_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

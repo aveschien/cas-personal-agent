@@ -59,7 +59,6 @@ test("the Pi Interpreter preserves multi-turn state and records each completed t
       rawText: "刚才说的项目是什么",
       rawPayload: {},
     });
-
     assert.deepEqual(prompts, [
       JSON.stringify({
         trustedContext: {
@@ -143,6 +142,13 @@ test("memory recall is injected with provenance and failure degrades silently", 
       receivedAt: "2026-09-02T19:11:00.000Z",
       userId: "ou_authorized",
       rawText: "继续",
+      rawPayload: {},
+    });
+    await interpreter.interpret({
+      sourceMessageId: "om_memory_3",
+      receivedAt: "2026-09-02T19:12:00.000Z",
+      userId: "ou_authorized",
+      rawText: "上次我说过什么",
       rawPayload: {},
     });
     const firstPrompt = JSON.parse(prompts[0] ?? "{}") as {
@@ -282,6 +288,33 @@ test("authoritative Bitable corrections reach Pi ahead of stale context", async 
         content: "权威纠正：事项已在多维表格中设为完成。",
       },
     ]);
+  } finally {
+    interpreter.dispose();
+    registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a pure local attention query cannot leak a model-proposed business write", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-agent-pure-query-"));
+  const registry = createPiSessionRegistry(join(directory, "events.sqlite"));
+  const interpreter = createPiInterpreter({
+    logicalConversationId: "cas-main", registry,
+    runtime: {
+      sessionId: "pi-pure-query", sessionPath: join(directory, "pi.jsonl"),
+      runTurn: async () => ({
+        acknowledgement: "今天先处理报价。",
+        changes: [{ kind: "upsert_item", itemKey: "should-not-write", title: "错误写入", type: "task", status: "actionable" }],
+      }),
+      dispose: () => undefined,
+    },
+    currentAttention: {
+      resolve: async () => ({ cognitiveMode: "execute", queryKind: "now", currentAttention: [] }),
+    },
+  });
+  try {
+    const result = await interpreter.interpret({ sourceMessageId: "pure-1", receivedAt: "2026-09-07T03:00:00.000Z", userId: "ou_user", rawText: "今天有啥要忙？", rawPayload: {} });
+    assert.deepEqual(result.changes, []);
   } finally {
     interpreter.dispose();
     registry.close();

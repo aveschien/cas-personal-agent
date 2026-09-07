@@ -20,7 +20,7 @@ export interface ClaimedVerification extends VerificationRequest {
 
 export interface ExternalSyncStore {
   enqueue(request: VerificationRequest, now?: string): void;
-  claim(connector: VerificationConnector, now?: string): ClaimedVerification | undefined;
+  claim(connector: VerificationConnector, now?: string, entityKey?: string): ClaimedVerification | undefined;
   succeed(id: string, now?: string): void;
   fail(id: string, error: unknown, now?: string, maxAttempts?: number): void;
   begin(connector: VerificationConnector, scope: unknown, now?: string): boolean;
@@ -74,13 +74,14 @@ export function createExternalSyncStore(databasePath: string): ExternalSyncStore
         request.reason, JSON.stringify(request.payload), now, now,
       );
     },
-    claim(connector, now = new Date().toISOString()) {
+    claim(connector, now = new Date().toISOString(), entityKey) {
       const row = database.prepare(
         `SELECT id, connector, entity_type, entity_key, reason, payload_json, attempt_count
          FROM verification_queue WHERE connector = ? AND status IN ('pending', 'retry')
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+           AND (? IS NULL OR entity_key = ?)
          ORDER BY created_at, id LIMIT 1`,
-      ).get(connector, now) as unknown as QueueRow | undefined;
+      ).get(connector, now, entityKey ?? null, entityKey ?? null) as unknown as QueueRow | undefined;
       if (row === undefined) return undefined;
       const claimed = database.prepare(
         `UPDATE verification_queue SET status = 'running', updated_at = ?

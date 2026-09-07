@@ -53,7 +53,7 @@ import {
   type PiConversationRuntime,
 } from "./pi-interpreter.js";
 import { createPiSdkRuntime } from "./pi-sdk-runtime.js";
-import type { PiThinkingLevel } from "./pi-sdk-runtime.js";
+import type { PiContextTools, PiThinkingLevel } from "./pi-sdk-runtime.js";
 import { createPiSessionRegistry } from "./pi-session-registry.js";
 import { createProjectionRepairWorker } from "./projection-repair-worker.js";
 import { createReminderStore } from "./reminder-store.js";
@@ -70,6 +70,7 @@ import { createExternalSyncStore } from "./external-sync-store.js";
 import { createExternalActionSyncWorker } from "./external-action-sync-worker.js";
 import { createExternalCollaborativeSyncWorker } from "./external-collaborative-sync-worker.js";
 import { createLarkTaskEventChannel, type LarkTaskEventChannel } from "./lark-task-event-channel.js";
+import { createWorkingSetStore } from "./working-set-store.js";
 
 export interface LiveServiceConfig {
   readonly cwd: string;
@@ -124,6 +125,7 @@ export interface RuntimeFactoryInput {
   readonly personalActionsEnabled: boolean;
   readonly collaborativeActionsEnabled: boolean;
   readonly collaboratorResolver?: CollaboratorResolver;
+  readonly contextTools?: PiContextTools;
 }
 
 export interface LiveServiceDependencies {
@@ -156,11 +158,36 @@ export async function createLiveService(
   const registry = createPiSessionRegistry(config.databasePath);
   const currentStateStore = createCurrentStateStore(config.databasePath);
   const externalSyncStore = createExternalSyncStore(config.databasePath);
+  const workingSetStore = createWorkingSetStore(config.databasePath);
   const collaborativeActionsEnabled =
     config.collaborativeActions?.enabled === true;
   const collaboratorResolver = collaborativeActionsEnabled
     ? (dependencies.collaboratorResolver ?? createLarkCollaboratorResolver())
     : undefined;
+  const memory = config.memory.enabled
+    ? (dependencies.memoryAdapter ?? createHindsightMemoryAdapter({ baseUrl: config.memory.baseUrl, bankId: config.memory.bankId }))
+    : undefined;
+  let refreshCurrentAction = async (actionKey: string): Promise<unknown> => {
+    const action = currentStateStore.actionStates().find((candidate) => candidate.actionKey === actionKey);
+    if (action?.externalObjectId === undefined || action.factOwner === "bitable") return { refreshed: false, reason: "unknown action or no external object" };
+    externalSyncStore.enqueue({ connector: action.factOwner, entityType: "action_link", entityKey: action.actionKey, reason: "explicit_refresh", payload: { externalId: action.externalObjectId } });
+    return { refreshed: false, queued: true, actionKey, currentStatus: action.externalStatus };
+  };
+  const contextTools: PiContextTools = {
+    queryLocal({ entity, query, limit }) {
+      const needle = query?.trim().toLocaleLowerCase("zh-CN");
+      const state = currentStateStore.snapshot();
+      if (entity === "project") {
+        return { results: state.projects.filter((project) => needle === undefined || `${project.name} ${project.key}`.toLocaleLowerCase("zh-CN").includes(needle)).slice(0, limit).map((project) => ({ key: project.key, name: project.name, status: project.status, ...(project.summary == null ? {} : { summary: project.summary.slice(0, 500) }) })) };
+      }
+      const matches = state.items.filter((item) => needle === undefined || `${item.title} ${item.key}`.toLocaleLowerCase("zh-CN").includes(needle));
+      return { results: (entity === "attention" ? matches.filter((item) => ["actionable", "in_progress", "scheduled", "waiting"].includes(item.status)) : matches).slice(0, limit).map((item) => ({ key: item.key, title: item.title, status: item.status, ...(item.projectKey == null ? {} : { projectKey: item.projectKey }), ...(item.nextAction == null ? {} : { nextAction: item.nextAction.slice(0, 500) }) })) };
+    },
+    async searchMemory({ query, limit, maxTokens }) {
+      return memory === undefined ? [] : await memory.recall({ query, maxResults: limit, maxTokens, signal: new AbortController().signal });
+    },
+    refreshAction: (actionKey) => refreshCurrentAction(actionKey),
+  };
   let runtime: PiConversationRuntime;
   try {
     runtime = await (dependencies.runtimeFactory ?? createPiSdkRuntime)({
@@ -171,22 +198,16 @@ export async function createLiveService(
       memoryEnabled: config.memory.enabled,
       personalActionsEnabled: config.personalActions?.enabled === true,
       collaborativeActionsEnabled,
+      contextTools,
       ...(collaboratorResolver === undefined ? {} : { collaboratorResolver }),
     });
   } catch (error) {
     externalSyncStore.close();
+    workingSetStore.close();
     currentStateStore.close();
     registry.close();
     throw error;
   }
-
-  const memory = config.memory.enabled
-    ? (dependencies.memoryAdapter ??
-      createHindsightMemoryAdapter({
-        baseUrl: config.memory.baseUrl,
-        bankId: config.memory.bankId,
-      }))
-    : undefined;
 
   const ownsStateProjector = dependencies.stateProjector === undefined;
   const reminderStore = ownsStateProjector
@@ -330,6 +351,8 @@ export async function createLiveService(
     memoryRecallMaxTokens: config.memory.recallMaxTokens,
     onMemoryError: onError,
     onCurrentStateError: onError,
+    workingSet: workingSetStore,
+    currentStateSnapshot: () => currentStateStore.snapshot(),
     ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
   });
   const stateProjector =
@@ -497,6 +520,16 @@ export async function createLiveService(
         timeoutMs: config.externalSync?.timeoutMs ?? 5_000,
         onError,
       });
+  refreshCurrentAction = async (actionKey) => {
+    const action = currentStateStore.actionStates().find((candidate) => candidate.actionKey === actionKey);
+    if (action === undefined || action.factOwner === "bitable") return { refreshed: false, reason: "unknown or locally-owned action" };
+    const refreshed = action.factOwner === "ticktick"
+      ? await externalActionSync?.refreshNow(actionKey)
+      : await externalCollaborativeSync?.refreshNow(actionKey);
+    return refreshed === undefined
+      ? { refreshed: false, queued: true, actionKey, currentStatus: action.externalStatus }
+      : { refreshed: refreshed.lastVerifiedAt !== action.lastVerifiedAt, ...(refreshed.lastVerifiedAt === action.lastVerifiedAt ? { queued: true } : {}), actionKey, currentStatus: refreshed.externalStatus, lastVerifiedAt: refreshed.lastVerifiedAt ?? null, uncertaintyReason: refreshed.uncertaintyReason ?? null };
+  };
   const taskEventChannel = collaborativeActionsEnabled
     ? (dependencies.taskEventChannel ?? createLarkTaskEventChannel())
     : undefined;
@@ -616,6 +649,7 @@ export async function createLiveService(
         focusStateStore?.close();
         currentStateStore.close();
         externalSyncStore.close();
+        workingSetStore.close();
       }
     },
   };

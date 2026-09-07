@@ -60,7 +60,7 @@ test("the Pi SDK runtime exposes only the controlled semantic operation tool", a
     },
   ]);
 
-  assert.deepEqual(factoryInput?.enabledToolNames, ["state_apply_operation"]);
+  assert.deepEqual(factoryInput?.enabledToolNames, ["state_apply_operation", "state_query_local", "state_refresh_object"]);
   assert.equal(factoryInput?.disableBuiltinTools, true);
   assert.equal(factoryInput?.thinkingLevel, "max");
   assert.match(factoryInput?.systemPrompt ?? "", /不得使用 shell/);
@@ -134,7 +134,10 @@ test("memory-enabled Pi can propose a selected durable memory", async () => {
     });
     assert.deepEqual(factoryInput?.enabledToolNames, [
       "state_apply_operation",
+      "state_query_local",
+      "state_refresh_object",
       "memory_propose_retain",
+      "memory_search",
     ]);
   } finally {
     runtime.dispose();

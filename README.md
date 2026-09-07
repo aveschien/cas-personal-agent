@@ -166,6 +166,8 @@ SQLite Current State 保存项目、事项和行动挂载的本地可恢复读�
 
 ProjectData 中缺失只表示“不在当前开放任务快照”，不会被直接判为完成或删除；本地先保留 `unknown`，再将该对象放入 SQLite 持久化核验队列。队列及连接器指纹、最近成功时间、退避状态均可跨重启恢复。只有外部指纹实际变化才回写“行动同步”。中国区 Dida365 仅复用已验证的 ProjectData/单任务接口；在真实账号完成契约验证前，不启用 TickTick 专有的 completed/filter 等扩展接口。
 
+近期项目、事项和未闭环问题另以最多 12 条 Working Set 引用保存，可跨重启恢复，但不复制完整事实。Pi 可通过受控只读工具查询最多 10 条本地 Project/Item/Attention；普通讨论不访问外部系统，历史表达才检索有限 Hindsight 结果。明确要求最新或遇到 `unknown` 时只核验指定 Action；连接器空闲时本回合等候该次受限读取，否则持久化排队并明确返回尚未核实。
+
 ## 协同承诺与飞书任务
 
 飞书任务写入默认关闭。确认 `lark-cli auth status --json --verify` 的用户身份具备 `task:task:read` 和 `task:task:write` 后，可显式启用：

@@ -51,6 +51,34 @@ export function createExternalCollaborativeSyncWorker(options: ExternalCollabora
       const local = options.currentState.actionStates("feishu_task").find((state) => state.externalObjectId === externalId);
       if (local !== undefined) this.requestRefresh(local.actionKey, "external_signal", now);
     },
+    async refreshNow(actionKey: string, now = new Date().toISOString()) {
+      this.requestRefresh(actionKey, "explicit_refresh", now);
+      if (!options.queue.begin("feishu_task", { requestBudget: 1, targeted: actionKey }, now)) return options.currentState.actionStates("feishu_task").find((state) => state.actionKey === actionKey);
+      const claimed = options.queue.claim("feishu_task", now, actionKey);
+      if (claimed === undefined) {
+        options.queue.complete("feishu_task", undefined, now);
+        return options.currentState.actionStates("feishu_task").find((state) => state.actionKey === actionKey);
+      }
+      try {
+        const local = options.currentState.actionStates("feishu_task").find((state) => state.actionKey === actionKey);
+        if (local?.externalObjectId === undefined) throw new Error("verification target has no external ID");
+        const external = await bounded(options.actions.getState(local.externalObjectId), timeoutMs);
+        options.currentState.recordExternalActionState({
+          actionKey, observedAt: now, ...(external.updatedAt === undefined ? {} : { sourceUpdatedAt: external.updatedAt }),
+          fingerprint: fingerprint(external), status: external.status,
+          ...(external.title === undefined ? {} : { title: external.title }),
+          ...(external.deadlineAt === undefined ? {} : { deadlineAt: external.deadlineAt }),
+          ...(external.assigneeNames === undefined ? {} : { assignee: external.assigneeNames.join("、") || null }),
+        });
+        options.queue.succeed(claimed.id, now);
+        options.queue.complete("feishu_task", fingerprint(external), now);
+      } catch (error) {
+        options.queue.fail(claimed.id, error, now);
+        options.queue.failConnector("feishu_task", error, now);
+        options.onError?.(error);
+      }
+      return options.currentState.actionStates("feishu_task").find((state) => state.actionKey === actionKey);
+    },
     async runOnce(now = new Date().toISOString()) {
       if (!options.queue.begin("feishu_task", { requestBudget: budget }, now)) return false;
       try {

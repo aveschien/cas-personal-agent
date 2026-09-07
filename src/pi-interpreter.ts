@@ -22,6 +22,9 @@ import type {
   CurrentAttentionResolution,
   CurrentAttentionResolver,
 } from "./current-attention.js";
+import type { CurrentStateSnapshot } from "./current-state-store.js";
+import type { WorkingSetStore } from "./working-set-store.js";
+import { isSemanticOperation } from "./state-operations.js";
 
 export interface PiConversationRuntime {
   readonly sessionId: string;
@@ -51,6 +54,16 @@ export interface PiInterpreterOptions {
   readonly authoritativeBitable?: AuthoritativeBitableReader;
   readonly currentAttention?: CurrentAttentionResolver;
   readonly onCurrentStateError?: (error: unknown) => void;
+  readonly workingSet?: WorkingSetStore;
+  readonly currentStateSnapshot?: () => CurrentStateSnapshot;
+}
+
+export function needsMemorySearch(message: string): boolean {
+  return /以前|之前|过去|历史|回忆|记得|上次|曾经|我的习惯|我的偏好|我说过/.test(message);
+}
+
+function isPureAttentionQuery(message: string, attention: CurrentAttentionResolution | undefined): boolean {
+  return attention?.queryKind !== undefined && !/新增|创建|记录|记下|改成|改为|更新|完成|取消|删除|放弃|安排|提醒|设为/.test(message);
 }
 
 export function createPiInterpreter(
@@ -58,7 +71,7 @@ export function createPiInterpreter(
 ): PiInterpreter {
   const clock = options.clock ?? (() => new Date().toISOString());
   const recallMemory = async (event: ChannelEvent): Promise<readonly RecalledMemory[]> => {
-    if (options.memory === undefined) {
+    if (options.memory === undefined || !needsMemorySearch(event.rawText)) {
       return [];
     }
     const controller = new AbortController();
@@ -139,6 +152,11 @@ export function createPiInterpreter(
 
   return {
     async interpret(event: ChannelEvent) {
+      if (options.workingSet !== undefined && options.currentStateSnapshot !== undefined) {
+        options.workingSet.observeMessage(options.logicalConversationId, event.rawText, options.currentStateSnapshot(), event.receivedAt);
+      }
+      const workingSet = options.workingSet?.snapshot(options.logicalConversationId, 8) ?? [];
+      const referenceCandidates = options.workingSet?.referenceCandidates(options.logicalConversationId, event.rawText, 3) ?? [];
       const [recalledMemories, authoritativeActions, authoritativeBitable] =
         await Promise.all([
           recallMemory(event),
@@ -165,12 +183,20 @@ export function createPiInterpreter(
               ? {}
               : { authoritativeItems: authoritativeBitable.items }),
             ...(attention === undefined ? {} : { attention }),
+            ...(workingSet.length === 0 ? {} : { workingSet }),
+            ...(referenceCandidates.length === 0 ? {} : { referenceCandidates }),
           },
           userMessage: event.rawText,
         }),
         event.images,
       );
+      const effectiveChanges = isPureAttentionQuery(event.rawText, attention) ? [] : result.changes;
       options.registry.recordCompletedTurn(options.runtime.sessionId, clock());
+      options.workingSet?.observeOperations(
+        options.logicalConversationId,
+        effectiveChanges.filter(isSemanticOperation),
+        event.receivedAt,
+      );
       const memoryCandidates = [
         ...authoritativeActions.memoryCandidates,
         ...authoritativeBitable.memoryCandidates,
@@ -178,6 +204,7 @@ export function createPiInterpreter(
       ];
       return {
         ...result,
+        changes: effectiveChanges,
         ...(memoryCandidates.length === 0 ? {} : { memoryCandidates }),
       };
     },
