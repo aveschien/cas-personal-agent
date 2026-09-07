@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const schemaVersion = 4;
+const schemaVersion = 5;
 const requiredTables = [
   "bitable_authoritative_corrections",
   "bitable_projection_snapshots",
@@ -8,6 +8,7 @@ const requiredTables = [
   "current_items",
   "current_projects",
   "current_state_versions",
+  "connector_sync_state",
   "events",
   "focus_state",
   "message_inbox",
@@ -16,6 +17,7 @@ const requiredTables = [
   "reminders",
   "schema_migrations",
   "session_handoffs",
+  "verification_queue",
 ] as const;
 
 interface JournalModeRow {
@@ -256,6 +258,13 @@ export function initializeStorage(database: DatabaseSync): void {
       start_at TEXT,
       end_at TEXT,
       external_object_id TEXT,
+      external_status TEXT NOT NULL DEFAULT 'unknown' CHECK (
+        external_status IN ('open', 'completed', 'unknown')
+      ),
+      external_fingerprint TEXT,
+      external_updated_at TEXT,
+      last_verified_at TEXT,
+      uncertainty_reason TEXT,
       execution_status TEXT NOT NULL CHECK (
         execution_status IN ('requested', 'confirmed', 'failed', 'unknown')
       ),
@@ -270,6 +279,40 @@ export function initializeStorage(database: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS current_action_links_item_idx
       ON current_action_links (item_key);
+
+    CREATE TABLE IF NOT EXISTS connector_sync_state (
+      connector TEXT PRIMARY KEY,
+      scope_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'retry')),
+      last_started_at TEXT,
+      last_succeeded_at TEXT,
+      next_attempt_at TEXT,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      last_error_json TEXT,
+      last_fingerprint TEXT,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS verification_queue (
+      id TEXT PRIMARY KEY,
+      connector TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_key TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('pending', 'running', 'retry', 'succeeded', 'dead')
+      ),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      last_error_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (connector, entity_type, entity_key, reason)
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS verification_queue_ready_idx
+      ON verification_queue (connector, status, next_attempt_at, created_at);
 
     CREATE TABLE IF NOT EXISTS current_state_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -292,9 +335,26 @@ export function initializeStorage(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS current_state_versions_entity_idx
       ON current_state_versions (entity_type, entity_key, revision);
 
+  `);
+
+  const actionColumns = new Set(
+    (database.prepare("PRAGMA table_info(current_action_links)").all() as unknown as { name: string }[])
+      .map((column) => column.name),
+  );
+  for (const [name, definition] of [
+    ["external_status", "TEXT NOT NULL DEFAULT 'unknown' CHECK (external_status IN ('open', 'completed', 'unknown'))"],
+    ["external_fingerprint", "TEXT"],
+    ["external_updated_at", "TEXT"],
+    ["last_verified_at", "TEXT"],
+    ["uncertainty_reason", "TEXT"],
+  ] as const) {
+    if (!actionColumns.has(name)) {
+      database.exec(`ALTER TABLE current_action_links ADD COLUMN ${name} ${definition}`);
+    }
+  }
+  database.exec(`
     INSERT OR IGNORE INTO schema_migrations (version, applied_at)
     VALUES (${schemaVersion}, CURRENT_TIMESTAMP);
-
     PRAGMA user_version = ${schemaVersion};
   `);
 }

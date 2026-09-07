@@ -186,5 +186,18 @@ export function createTickTickActionAdapter(
         ),
       );
     },
+
+    async listProjectSnapshot(projectId) {
+      if (projectId !== options.projectId) {
+        throw new Error("TickTick snapshot is restricted to the configured project");
+      }
+      const projectData = await requestJson(
+        `${baseUrl}/project/${encodeURIComponent(options.projectId)}/data`,
+      );
+      if (!isRecord(projectData) || !Array.isArray(projectData.tasks)) {
+        throw new Error("TickTick returned invalid project data");
+      }
+      return projectData.tasks.map((value) => toExternalState(parseTask(value)));
+    },
   };
 }

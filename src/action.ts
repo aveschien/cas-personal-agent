@@ -25,6 +25,8 @@ export interface PersonalActionAdapter {
     projectId: string,
     externalId: string,
   ): Promise<ExternalPersonalAction>;
+  /** Configured-list snapshot. TickTick ProjectData contains open tasks only. */
+  listProjectSnapshot?(projectId: string): Promise<readonly ExternalPersonalAction[]>;
 }
 
 export interface CreateCollaborativeActionRequest {

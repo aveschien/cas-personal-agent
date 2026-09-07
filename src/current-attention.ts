@@ -78,6 +78,12 @@ export interface CurrentAttentionResolverOptions {
   readonly actionLinksTableId: string;
   readonly focus: FocusStateStore;
   readonly onSyncError?: (error: unknown) => void;
+  readonly localActionTimings?: () => readonly {
+    readonly itemKey: string;
+    readonly status: "open" | "completed" | "unknown";
+    readonly deadlineAt?: string;
+  }[];
+  readonly syncDerivedView?: boolean;
 }
 
 interface ItemTiming {
@@ -348,28 +354,26 @@ export function createCurrentAttentionResolver(
         (project) => project.recordId === focus.activeProjectRecordId,
       );
 
-      const actionRecords = await options.bitable.list(
-        options.actionLinksTableId,
-        actionReadFields,
-      );
       const timingByItem = new Map<string, string[]>();
-      for (const action of actionRecords) {
-        if (text(action.fields["外部状态镜像"]) === "completed") {
-          continue;
+      if (options.localActionTimings !== undefined) {
+        const recordsByKey = new Map(items.map((item) => [item.itemKey, item.recordId]));
+        for (const action of options.localActionTimings()) {
+          const itemRecordId = recordsByKey.get(action.itemKey);
+          if (itemRecordId !== undefined && action.status !== "completed" && action.deadlineAt !== undefined) {
+            timingByItem.set(itemRecordId, [...(timingByItem.get(itemRecordId) ?? []), action.deadlineAt]);
+          }
         }
-        const itemRecordId = linkedRecordId(action.fields["所属事项"]);
-        if (itemRecordId === undefined) {
-          continue;
-        }
-        const times = [
-          text(action.fields.deadline),
-          text(action.fields["开始时间"]),
-        ].filter((value): value is string => value !== undefined);
-        if (times.length > 0) {
-          timingByItem.set(itemRecordId, [
-            ...(timingByItem.get(itemRecordId) ?? []),
-            ...times,
-          ]);
+      } else {
+        const actionRecords = await options.bitable.list(options.actionLinksTableId, actionReadFields);
+        for (const action of actionRecords) {
+          if (text(action.fields["外部状态镜像"]) === "completed") continue;
+          const itemRecordId = linkedRecordId(action.fields["所属事项"]);
+          if (itemRecordId === undefined) continue;
+          const times = [text(action.fields.deadline), text(action.fields["开始时间"])]
+            .filter((value): value is string => value !== undefined);
+          if (times.length > 0) {
+            timingByItem.set(itemRecordId, [...(timingByItem.get(itemRecordId) ?? []), ...times]);
+          }
         }
       }
       const nowTime = Date.parse(input.now);
@@ -448,15 +452,12 @@ export function createCurrentAttentionResolver(
         selected.push(candidate);
       }
       selected.sort((left, right) => right.score - left.score);
-      try {
-        await syncCurrentAttention(
-          options.bitable,
-          options.itemsTableId,
-          input.items,
-          selected,
-        );
-      } catch (error) {
-        options.onSyncError?.(error);
+      if (options.syncDerivedView !== false) {
+        try {
+          await syncCurrentAttention(options.bitable, options.itemsTableId, input.items, selected);
+        } catch (error) {
+          options.onSyncError?.(error);
+        }
       }
 
       if (queryKind === "waiting") {

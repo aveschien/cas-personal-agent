@@ -28,6 +28,9 @@ export interface LiveEnvironment {
   readonly CAS_MESSAGE_BATCHING_ENABLED?: string;
   readonly CAS_MESSAGE_SETTLE_MS?: string;
   readonly CAS_MESSAGE_MAX_WAIT_MS?: string;
+  readonly CAS_EXTERNAL_SYNC_INTERVAL_MS?: string;
+  readonly CAS_EXTERNAL_SYNC_REQUEST_BUDGET?: string;
+  readonly CAS_EXTERNAL_SYNC_TIMEOUT_MS?: string;
 }
 
 function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
@@ -227,6 +230,11 @@ export function loadLiveConfig(
       enabled: messageBatchingEnabled,
       settleMs: messageSettleMs,
       maxWaitMs: messageMaxWaitMs,
+    },
+    externalSync: {
+      intervalMs: positiveInteger(environment.CAS_EXTERNAL_SYNC_INTERVAL_MS, 60_000, "CAS_EXTERNAL_SYNC_INTERVAL_MS"),
+      requestBudget: positiveInteger(environment.CAS_EXTERNAL_SYNC_REQUEST_BUDGET, 5, "CAS_EXTERNAL_SYNC_REQUEST_BUDGET"),
+      timeoutMs: positiveInteger(environment.CAS_EXTERNAL_SYNC_TIMEOUT_MS, 5_000, "CAS_EXTERNAL_SYNC_TIMEOUT_MS"),
     },
   };
 }

@@ -219,7 +219,7 @@ test("Bitable Project, Item, and Action Link migrate idempotently with stable li
   }
 });
 
-test("schema v4 migration preserves Events, Pi sessions, outbox, and reminders", async () => {
+test("schema v5 migration preserves Events, Pi sessions, outbox, and reminders", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cas-current-schema-"));
   const databasePath = join(directory, "events.sqlite");
   const database = new DatabaseSync(databasePath);
@@ -270,10 +270,51 @@ test("schema v4 migration preserves Events, Pi sessions, outbox, and reminders",
     }
     assert.equal(
       (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      4,
+      5,
     );
   } finally {
     migrated.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("schema v5 adds external verification metadata to an existing v4 Action table", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cas-current-v4-action-"));
+  const databasePath = join(directory, "events.sqlite");
+  const database = new DatabaseSync(databasePath);
+  initializeStorage(database);
+  database.exec(`
+    DROP TABLE current_action_links;
+    CREATE TABLE current_action_links (
+      action_key TEXT PRIMARY KEY, record_id TEXT, item_key TEXT NOT NULL,
+      project_key TEXT, title TEXT NOT NULL, action_type TEXT NOT NULL,
+      fact_owner TEXT NOT NULL, assignee TEXT, assignee_id TEXT,
+      deadline_at TEXT, start_at TEXT, end_at TEXT, external_object_id TEXT,
+      execution_status TEXT NOT NULL, revision INTEGER NOT NULL,
+      source_kind TEXT NOT NULL, source_event_id TEXT NOT NULL,
+      source_occurred_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    ) STRICT;
+    INSERT INTO current_action_links VALUES (
+      'legacy-action', 'rec-action', 'legacy-item', NULL, '旧行动',
+      'personal_action', 'ticktick', NULL, NULL, NULL, NULL, NULL,
+      'task-old', 'confirmed', 1, 'migration', 'legacy-event',
+      '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'
+    );
+    PRAGMA user_version = 4;
+  `);
+  database.close();
+  const store = createCurrentStateStore(databasePath);
+  try {
+    const state = store.actionStates("ticktick")[0];
+    assert.equal(state?.actionKey, "legacy-action");
+    assert.equal(state?.externalStatus, "unknown");
+    const migrated = new DatabaseSync(databasePath);
+    const columns = (migrated.prepare("PRAGMA table_info(current_action_links)").all() as unknown as { name: string }[]).map((column) => column.name);
+    migrated.close();
+    assert.equal(columns.includes("external_fingerprint"), true);
+    assert.equal(columns.includes("last_verified_at"), true);
+  } finally {
+    store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

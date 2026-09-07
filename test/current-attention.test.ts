@@ -56,6 +56,7 @@ async function fixture(
     readonly fields: Readonly<Record<string, unknown>>;
   }[] = [],
   failSync = false,
+  localActionTimings?: () => readonly { itemKey: string; status: "open" | "completed" | "unknown"; deadlineAt?: string }[],
 ) {
   const directory = await mkdtemp(join(tmpdir(), "cas-attention-"));
   const focus = createFocusStateStore(join(directory, "events.sqlite"));
@@ -64,10 +65,11 @@ async function fixture(
     readonly fields: Readonly<Record<string, unknown>>;
   }[] = [];
   const syncErrors: unknown[] = [];
+  let listCalls = 0;
   const resolver = createCurrentAttentionResolver({
     logicalConversationId: "cas-main",
     bitable: {
-      list: async () => actionRows,
+      list: async () => { listCalls += 1; return actionRows; },
       findByKey: async () => undefined,
       create: async () => {
         throw new Error("not used");
@@ -84,8 +86,9 @@ async function fixture(
     actionLinksTableId: "tbl_actions",
     focus,
     onSyncError: (error) => syncErrors.push(error),
+    ...(localActionTimings === undefined ? {} : { localActionTimings, syncDerivedView: false }),
   });
-  return { directory, focus, resolver, updates, syncErrors };
+  return { directory, focus, resolver, updates, syncErrors, listCalls: () => listCalls };
 }
 
 test("attention query classification stays narrow", () => {
@@ -94,6 +97,21 @@ test("attention query classification stays narrow", () => {
   assert.equal(classifyAttentionQuery("继续那个项目"), "continue");
   assert.equal(classifyAttentionQuery("继续开发"), "continue");
   assert.equal(classifyAttentionQuery("记录一个新想法"), undefined);
+});
+
+test("production attention can rank from local action timing without Bitable reads or writes", async () => {
+  const { directory, focus, resolver, updates, listCalls } = await fixture([], false, () => [{
+    itemKey: "due", status: "open", deadlineAt: "2026-09-03T08:30:00+08:00",
+  }]);
+  const result = await resolver.resolve({
+    message: "我现在该做什么？", now: "2026-09-03T02:00:00.000Z", projects,
+    items: [item("rec_due", "due", "提交承诺", { status: "收件箱" })],
+  });
+  assert.equal(result.currentAttention?.[0]?.itemKey, "due");
+  assert.equal(listCalls(), 0);
+  assert.equal(updates.length, 0);
+  focus.close();
+  await rm(directory, { recursive: true, force: true });
 });
 
 test("Current Attention excludes parked and Waiting Items but never hides due work", async () => {

@@ -61,6 +61,20 @@ export interface ActionExecutionState {
   readonly sourceEventId: string;
 }
 
+export interface CurrentActionState extends ActionExecutionState {
+  readonly recordId?: string;
+  readonly itemKey: string;
+  readonly projectKey?: string;
+  readonly title: string;
+  readonly factOwner: "ticktick" | "feishu_task" | "bitable";
+  readonly deadlineAt?: string;
+  readonly assignee?: string;
+  readonly externalStatus: "open" | "completed" | "unknown";
+  readonly externalFingerprint?: string;
+  readonly lastVerifiedAt?: string;
+  readonly uncertaintyReason?: string;
+}
+
 export interface CurrentStateStore {
   apply(input: ApplyCurrentStateInput): BitableProjectionPlan;
   importBitable(
@@ -87,6 +101,18 @@ export interface CurrentStateStore {
     readonly status: "confirmed" | "failed";
   }): void;
   actionExecution(actionKey: string): ActionExecutionState | undefined;
+  actionStates(factOwner?: CurrentActionState["factOwner"]): readonly CurrentActionState[];
+  recordExternalActionState(input: {
+    readonly actionKey: string;
+    readonly observedAt: string;
+    readonly sourceUpdatedAt?: string;
+    readonly fingerprint: string;
+    readonly status: "open" | "completed" | "unknown";
+    readonly title?: string;
+    readonly deadlineAt?: string | null;
+    readonly assignee?: string | null;
+    readonly uncertaintyReason?: string;
+  }): boolean;
   close(): void;
 }
 
@@ -140,6 +166,11 @@ interface ActionRow {
   start_at: string | null;
   end_at: string | null;
   external_object_id: string | null;
+  external_status: "open" | "completed" | "unknown";
+  external_fingerprint: string | null;
+  external_updated_at: string | null;
+  last_verified_at: string | null;
+  uncertainty_reason: string | null;
   execution_status: "requested" | "confirmed" | "failed" | "unknown";
   revision: number;
   source_kind: CurrentStateSource;
@@ -631,6 +662,10 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
         : database.prepare("SELECT * FROM current_items WHERE record_id = ?").get(itemRecordId) as ItemRow | undefined;
       const actionTypeLabel = selection(record.fields["行动类型"]);
       const ownerLabel = selection(record.fields["事实源"]);
+      const mirroredExternalStatus = text(record.fields["外部状态镜像"]);
+      const externalStatus = mirroredExternalStatus === "open" || mirroredExternalStatus === "completed"
+        ? mirroredExternalStatus
+        : "unknown";
       if (actionKey === undefined || title === undefined || itemRow === undefined) continue;
       const projectRecordId = linkedRecord(record.fields["所属项目"]);
       const projectRow = projectRecordId === undefined
@@ -690,6 +725,8 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
                 input.occurredAt,
                 input.occurredAt,
               );
+              database.prepare("UPDATE current_action_links SET external_status = ? WHERE action_key = ?")
+                .run(externalStatus, actionKey);
               database.exec("COMMIT");
             } catch (error) {
               database.exec("ROLLBACK");
@@ -722,12 +759,13 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
       });
       database.prepare(
         `UPDATE current_action_links
-         SET record_id = ?, external_object_id = ?, execution_status = ?
+         SET record_id = ?, external_object_id = ?, execution_status = ?, external_status = ?
          WHERE action_key = ?`,
       ).run(
         record.recordId,
         text(record.fields["外部对象 ID"]) ?? null,
         text(record.fields["外部状态镜像"]) === undefined ? "unknown" : "confirmed",
+        externalStatus,
         actionKey,
       );
     }
@@ -896,6 +934,89 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
             revision: row.revision,
             sourceEventId: row.source_event_id,
           };
+    },
+    actionStates(factOwner) {
+      const rows = database.prepare(
+        `SELECT * FROM current_action_links
+         ${factOwner === undefined ? "" : "WHERE fact_owner = ?"}
+         ORDER BY action_key`,
+      ).all(...(factOwner === undefined ? [] : [factOwner])) as unknown as ActionRow[];
+      return rows.map((row) => ({
+        actionKey: row.action_key,
+        ...(row.record_id === null ? {} : { recordId: row.record_id }),
+        itemKey: row.item_key,
+        ...(row.project_key === null ? {} : { projectKey: row.project_key }),
+        title: row.title,
+        factOwner: row.fact_owner,
+        ...(row.deadline_at === null ? {} : { deadlineAt: row.deadline_at }),
+        ...(row.assignee === null ? {} : { assignee: row.assignee }),
+        ...(row.external_object_id === null ? {} : { externalObjectId: row.external_object_id }),
+        status: row.execution_status,
+        externalStatus: row.external_status,
+        ...(row.external_fingerprint === null ? {} : { externalFingerprint: row.external_fingerprint }),
+        ...(row.last_verified_at === null ? {} : { lastVerifiedAt: row.last_verified_at }),
+        ...(row.uncertainty_reason === null ? {} : { uncertaintyReason: row.uncertainty_reason }),
+        revision: row.revision,
+        sourceEventId: row.source_event_id,
+      }));
+    },
+    recordExternalActionState(input) {
+      const current = action(input.actionKey);
+      if (current === undefined) throw new Error(`Current State Action Link not found for ${input.actionKey}`);
+      if (
+        current.external_updated_at !== null &&
+        input.sourceUpdatedAt !== undefined &&
+        Date.parse(input.sourceUpdatedAt) < Date.parse(current.external_updated_at)
+      ) return false;
+      if (current.external_fingerprint === input.fingerprint) {
+        database.prepare(
+          `UPDATE current_action_links SET last_verified_at = ?, updated_at = ? WHERE action_key = ?`,
+        ).run(input.observedAt, input.observedAt, input.actionKey);
+        return false;
+      }
+      const sourceEventId = `external:${input.fingerprint}`;
+      if (hasVersion("external_correction", sourceEventId, "action_link", input.actionKey)) return false;
+      const revision = current.revision + 1;
+      const applyInput: ApplyCurrentStateInput = {
+        sourceKind: "external_correction",
+        sourceEventId,
+        occurredAt: input.observedAt,
+        operations: [],
+      };
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        rememberVersion("action_link", input.actionKey, revision, applyInput, input, true);
+        database.prepare(
+          `UPDATE current_action_links SET
+             title = COALESCE(?, title), deadline_at = CASE WHEN ? THEN ? ELSE deadline_at END,
+             assignee = CASE WHEN ? THEN ? ELSE assignee END,
+             external_status = ?, external_fingerprint = ?, last_verified_at = ?,
+             external_updated_at = COALESCE(?, external_updated_at), uncertainty_reason = ?, revision = ?, source_kind = 'external_correction',
+             source_event_id = ?, source_occurred_at = ?, updated_at = ?
+           WHERE action_key = ?`,
+        ).run(
+          input.title ?? null,
+          Object.prototype.hasOwnProperty.call(input, "deadlineAt") ? 1 : 0,
+          input.deadlineAt ?? null,
+          Object.prototype.hasOwnProperty.call(input, "assignee") ? 1 : 0,
+          input.assignee ?? null,
+          input.status,
+          input.fingerprint,
+          input.observedAt,
+          input.sourceUpdatedAt ?? null,
+          input.uncertaintyReason ?? null,
+          revision,
+          sourceEventId,
+          input.observedAt,
+          input.observedAt,
+          input.actionKey,
+        );
+        database.exec("COMMIT");
+        return true;
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
     },
     close() {
       database.close();

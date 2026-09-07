@@ -147,6 +147,23 @@ test("TickTick state exposes authoritative title, deadline, and modification tim
   });
 });
 
+test("TickTick reads the configured project as one scoped open-task snapshot", async () => {
+  const calls: string[] = [];
+  const adapter = createTickTickActionAdapter({
+    apiToken: "secret-token",
+    projectId: "project-1",
+    fetcher: async (input) => {
+      calls.push(String(input));
+      return Response.json({ tasks: [{ id: "task-1", projectId: "project-1", title: "手机修改", status: 0 }] });
+    },
+  });
+  assert.deepEqual(await adapter.listProjectSnapshot?.("project-1"), [{
+    externalId: "task-1", projectId: "project-1", status: "open", title: "手机修改", deadlineAt: null,
+  }]);
+  assert.equal(calls.length, 1);
+  await assert.rejects(() => adapter.listProjectSnapshot!("another-project"), /configured project/);
+});
+
 test("TickTick credentials cannot be sent to an untrusted API host", () => {
   assert.throws(
     () =>

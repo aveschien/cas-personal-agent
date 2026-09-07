@@ -162,7 +162,9 @@ TICKTICK_BASE_URL=https://api.ticktick.com/open/v1
 
 中国区滴答账户使用 `https://api.dida365.com/open/v1`。创建任务前 Adapter 会在目标清单内检查稳定幂等标记；进程在外部创建后、Bitable 回写前中断，也不会因此重复创建任务。外部对象 ID、最新状态和同步时间会回写“行动同步”。
 
-SQLite Current State 保存项目、事项和行动挂载的本地可恢复读模型；Bitable 继续作为可编辑展示面，滴答和飞书任务继续拥有各自执行事实。普通回合读取本地状态，不再以逐项远端读取作为长期路径；后台同步与定向刷新按连接器真实能力推进。外部事实源里的完成状态、标题、截止时间和飞书负责人优先于旧对话、旧记忆及旧镜像。
+SQLite Current State 保存项目、事项和行动挂载的本地可恢复读模型；Bitable 继续作为可编辑展示面，滴答和飞书任务继续拥有各自执行事实。普通回合只读本地状态，不再逐项远端读取。后台默认每 60 秒比较 Bitable 和已配置滴答清单；滴答使用一次 ProjectData 开放任务快照，整个连接器每轮最多 5 次请求（含快照），单请求 5 秒超时。可用 `CAS_EXTERNAL_SYNC_INTERVAL_MS`、`CAS_EXTERNAL_SYNC_REQUEST_BUDGET`、`CAS_EXTERNAL_SYNC_TIMEOUT_MS` 调整，因此冷数据最坏覆盖时间约为 `ceil(待核对对象数/(预算-1)) × 间隔`。
+
+ProjectData 中缺失只表示“不在当前开放任务快照”，不会被直接判为完成或删除；本地先保留 `unknown`，再将该对象放入 SQLite 持久化核验队列。队列及连接器指纹、最近成功时间、退避状态均可跨重启恢复。只有外部指纹实际变化才回写“行动同步”。中国区 Dida365 仅复用已验证的 ProjectData/单任务接口；在真实账号完成契约验证前，不启用 TickTick 专有的 completed/filter 等扩展接口。
 
 ## 协同承诺与飞书任务
 

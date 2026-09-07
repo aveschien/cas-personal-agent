@@ -48,6 +48,11 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
         settleMs: 8_000,
         maxWaitMs: 30_000,
       },
+      externalSync: {
+        intervalMs: 60_000,
+        requestBudget: 5,
+        timeoutMs: 5_000,
+      },
     },
   );
 

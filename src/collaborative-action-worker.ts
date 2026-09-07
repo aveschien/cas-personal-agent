@@ -7,6 +7,7 @@ import type {
 import type { BitableRecordClient } from "./bitable-state-projector.js";
 import { initializeStorage } from "./storage.js";
 import type { CurrentStateStore } from "./current-state-store.js";
+import type { ExternalSyncStore } from "./external-sync-store.js";
 
 export interface CollaborativeActionWorkerOptions {
   readonly databasePath: string;
@@ -15,6 +16,7 @@ export interface CollaborativeActionWorkerOptions {
   readonly actionLinksTableId: string;
   readonly retryDelayMs?: number;
   readonly currentState?: CurrentStateStore;
+  readonly verificationQueue?: ExternalSyncStore;
 }
 
 export interface CollaborativeActionWorker {
@@ -127,6 +129,11 @@ export function createCollaborativeActionWorker(
           externalObjectId: created.externalId,
           status: "confirmed",
         });
+        options.verificationQueue?.enqueue({
+          connector: "feishu_task", entityType: "action_link",
+          entityKey: payload.request.actionKey, reason: "cas_write",
+          payload: { externalId: created.externalId },
+        }, now);
         await options.bitable.update(
           options.actionLinksTableId,
           payload.actionLinkRecordId,
@@ -179,6 +186,15 @@ export function createCollaborativeActionWorker(
               status: "failed",
             });
           }
+          options.verificationQueue?.enqueue({
+            connector: "feishu_task", entityType: "action_link",
+            entityKey: payload.request.actionKey, reason: "cas_failure",
+            payload: {
+              ...(options.currentState?.actionExecution(payload.request.actionKey)?.externalObjectId === undefined
+                ? {}
+                : { externalId: options.currentState.actionExecution(payload.request.actionKey)!.externalObjectId }),
+            },
+          }, now);
           try {
             await options.bitable.update(
               options.actionLinksTableId,

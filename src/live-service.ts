@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { createActionOutbox } from "./action-outbox.js";
 import { createActionWorker } from "./action-worker.js";
 import type {
@@ -5,10 +7,7 @@ import type {
   PersonalActionAdapter,
 } from "./action.js";
 import type { CollaboratorResolver } from "./collaborator.js";
-import {
-  createAuthoritativeActionReader,
-  type AuthoritativeActionReader,
-} from "./authoritative-action-reader.js";
+import type { AuthoritativeActionReader } from "./authoritative-action-reader.js";
 import {
   createAuthoritativeBitableReader,
   type AuthoritativeBitableReader,
@@ -67,6 +66,10 @@ import { createSupervisor } from "./supervisor.js";
 import { createTickTickActionAdapter } from "./ticktick-action-adapter.js";
 import { createFocusStateStore } from "./focus-state-store.js";
 import { createCurrentStateStore } from "./current-state-store.js";
+import { createExternalSyncStore } from "./external-sync-store.js";
+import { createExternalActionSyncWorker } from "./external-action-sync-worker.js";
+import { createExternalCollaborativeSyncWorker } from "./external-collaborative-sync-worker.js";
+import { createLarkTaskEventChannel, type LarkTaskEventChannel } from "./lark-task-event-channel.js";
 
 export interface LiveServiceConfig {
   readonly cwd: string;
@@ -98,6 +101,11 @@ export interface LiveServiceConfig {
     readonly enabled: boolean;
     readonly settleMs: number;
     readonly maxWaitMs: number;
+  };
+  readonly externalSync?: {
+    readonly intervalMs?: number;
+    readonly requestBudget?: number;
+    readonly timeoutMs?: number;
   };
 }
 
@@ -136,6 +144,7 @@ export interface LiveServiceDependencies {
   readonly currentAttentionResolver?: CurrentAttentionResolver;
   readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
+  readonly taskEventChannel?: LarkTaskEventChannel;
 }
 
 export async function createLiveService(
@@ -146,6 +155,7 @@ export async function createLiveService(
     dependencies.onError ?? ((error: unknown) => console.error(error));
   const registry = createPiSessionRegistry(config.databasePath);
   const currentStateStore = createCurrentStateStore(config.databasePath);
+  const externalSyncStore = createExternalSyncStore(config.databasePath);
   const collaborativeActionsEnabled =
     config.collaborativeActions?.enabled === true;
   const collaboratorResolver = collaborativeActionsEnabled
@@ -164,6 +174,7 @@ export async function createLiveService(
       ...(collaboratorResolver === undefined ? {} : { collaboratorResolver }),
     });
   } catch (error) {
+    externalSyncStore.close();
     currentStateStore.close();
     registry.close();
     throw error;
@@ -213,29 +224,6 @@ export async function createLiveService(
     ? (dependencies.collaborativeActionAdapter ??
       createLarkTaskActionAdapter())
     : undefined;
-  const authoritativeActions =
-    dependencies.authoritativeActionReader ??
-    (bitableClient === undefined ||
-    (personalActionAdapter === undefined &&
-      collaborativeActionAdapter === undefined)
-      ? undefined
-      : createAuthoritativeActionReader({
-          bitable: bitableClient,
-          actionLinksTableId: config.bitableTables.actionLinks,
-          ...(personalActionAdapter === undefined ||
-          config.personalActions?.enabled !== true
-            ? {}
-            : {
-                personal: {
-                  adapter: personalActionAdapter,
-                  projectId: config.personalActions.projectId,
-                },
-              }),
-          ...(collaborativeActionAdapter === undefined
-            ? {}
-            : { collaborative: { adapter: collaborativeActionAdapter } }),
-          onError,
-        }));
   const remoteBitable =
     dependencies.authoritativeBitableReader ??
     (bitableClient === undefined || bitableAuthorityStore === undefined
@@ -245,10 +233,11 @@ export async function createLiveService(
           tables: config.bitableTables,
           store: bitableAuthorityStore,
         }));
-  if (dependencies.authoritativeBitableReader === undefined && remoteBitable !== undefined) {
+  const synchronizeBitable = async (observedAt: string): Promise<void> => {
+    if (remoteBitable === undefined || !externalSyncStore.begin("bitable", config.bitableTables, observedAt)) return;
+    let timeout: NodeJS.Timeout | undefined;
     try {
-      const observedAt = dependencies.clock?.() ?? new Date().toISOString();
-      const [reconciliation, actionRecords] = await Promise.all([
+      const work = Promise.all([
         remoteBitable.reconcile(observedAt),
         bitableClient?.list(config.bitableTables.actionLinks, [
           "action_key",
@@ -267,15 +256,41 @@ export async function createLiveService(
           "最近同步",
         ]) ?? Promise.resolve([]),
       ]);
+      const [reconciliation, actionRecords] = await Promise.race([
+        work,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error(`Bitable sync timed out after ${config.externalSync?.timeoutMs ?? 5_000}ms`)), config.externalSync?.timeoutMs ?? 5_000);
+        }),
+      ]);
       currentStateStore.importBitable(
         reconciliation,
         observedAt,
         actionRecords,
       );
+      externalSyncStore.complete("bitable", createHash("sha256").update(JSON.stringify({ reconciliation, actionRecords })).digest("hex"), observedAt);
     } catch (error) {
+      externalSyncStore.failConnector("bitable", error, observedAt);
       onError(error);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
+  };
+  if (dependencies.authoritativeBitableReader === undefined && remoteBitable !== undefined) {
+    await synchronizeBitable(dependencies.clock?.() ?? new Date().toISOString());
   }
+  const authoritativeActions = dependencies.authoritativeActionReader ?? {
+    reconcile: async () => ({
+      states: currentStateStore.actionStates().filter((state) => state.factOwner !== "bitable" && state.externalStatus !== "unknown").map((state) => ({
+        actionKey: state.actionKey,
+        title: state.title,
+        factOwner: state.factOwner as "ticktick" | "feishu_task",
+        status: state.externalStatus as "open" | "completed",
+        ...(state.deadlineAt === undefined ? {} : { deadlineAt: state.deadlineAt }),
+        correctedFields: [],
+      })),
+      memoryCandidates: [],
+    }),
+  };
   const authoritativeBitable =
     dependencies.authoritativeBitableReader ?? {
       reconcile: async () => currentStateStore.read(),
@@ -290,6 +305,12 @@ export async function createLiveService(
           itemsTableId: config.bitableTables.items,
           actionLinksTableId: config.bitableTables.actionLinks,
           focus: focusStateStore,
+          localActionTimings: () => currentStateStore.actionStates().map((action) => ({
+            itemKey: action.itemKey,
+            status: action.externalStatus,
+            ...(action.deadlineAt === undefined ? {} : { deadlineAt: action.deadlineAt }),
+          })),
+          syncDerivedView: false,
           onSyncError: onError,
         }));
   const interpreter = createPiInterpreter({
@@ -416,6 +437,7 @@ export async function createLiveService(
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
           currentState: currentStateStore,
+          verificationQueue: externalSyncStore,
         });
   const collaborativeActionWorker =
     collaborativeActionOutbox === undefined || bitableClient === undefined
@@ -426,6 +448,7 @@ export async function createLiveService(
           bitable: bitableClient,
           actionLinksTableId: config.bitableTables.actionLinks,
           currentState: currentStateStore,
+          verificationQueue: externalSyncStore,
         });
   const channel = dependencies.channel ?? createLarkEventChannel();
   const replies = dependencies.replies ?? createLarkReplyAdapter();
@@ -450,10 +473,46 @@ export async function createLiveService(
     ...(batcher === undefined ? {} : { batcher }),
     onError,
   });
+  const externalActionSync =
+    config.personalActions?.enabled === true && personalActionAdapter?.listProjectSnapshot !== undefined
+      ? createExternalActionSyncWorker({
+          currentState: currentStateStore,
+          queue: externalSyncStore,
+          personal: personalActionAdapter,
+          projectId: config.personalActions.projectId,
+          ...(bitableClient === undefined ? {} : { bitable: bitableClient, actionLinksTableId: config.bitableTables.actionLinks }),
+          requestBudget: config.externalSync?.requestBudget ?? 5,
+          timeoutMs: config.externalSync?.timeoutMs ?? 5_000,
+          onError,
+        })
+      : undefined;
+  const externalCollaborativeSync = collaborativeActionAdapter === undefined
+    ? undefined
+    : createExternalCollaborativeSyncWorker({
+        currentState: currentStateStore,
+        queue: externalSyncStore,
+        actions: collaborativeActionAdapter,
+        ...(bitableClient === undefined ? {} : { bitable: bitableClient, actionLinksTableId: config.bitableTables.actionLinks }),
+        requestBudget: config.externalSync?.requestBudget ?? 5,
+        timeoutMs: config.externalSync?.timeoutMs ?? 5_000,
+        onError,
+      });
+  const taskEventChannel = collaborativeActionsEnabled
+    ? (dependencies.taskEventChannel ?? createLarkTaskEventChannel())
+    : undefined;
   let started = false;
   let stopped = false;
   let repairTimer: NodeJS.Timeout | undefined;
+  let externalSyncTimer: NodeJS.Timeout | undefined;
   let repairRun = Promise.resolve();
+  let externalSyncRun = Promise.resolve();
+  const runExternalSync = (includeSnapshots = true): void => {
+    externalSyncRun = externalSyncRun.then(async () => {
+      if (includeSnapshots) await externalActionSync?.runOnce();
+      await externalCollaborativeSync?.runOnce();
+      if (includeSnapshots) await synchronizeBitable(dependencies.clock?.() ?? new Date().toISOString());
+    }).catch(onError);
+  };
   const drainRepairs = (): void => {
     repairRun = repairRun
       .then(async () => {
@@ -502,11 +561,24 @@ export async function createLiveService(
       if (started) {
         return;
       }
-      await supervisor.start();
+      try {
+        await supervisor.start();
+        await taskEventChannel?.start((signal) => {
+          externalCollaborativeSync?.signalExternalId(signal.taskGuid, signal.occurredAt);
+          runExternalSync(false);
+        });
+      } catch (error) {
+        await taskEventChannel?.stop().catch(onError);
+        await supervisor.stop().catch(onError);
+        throw error;
+      }
       started = true;
       drainRepairs();
       repairTimer = setInterval(drainRepairs, 5_000);
       repairTimer.unref();
+      runExternalSync();
+      externalSyncTimer = setInterval(runExternalSync, config.externalSync?.intervalMs ?? 60_000);
+      externalSyncTimer.unref();
     },
 
     waitForExit() {
@@ -522,9 +594,12 @@ export async function createLiveService(
         if (repairTimer !== undefined) {
           clearInterval(repairTimer);
         }
+        if (externalSyncTimer !== undefined) clearInterval(externalSyncTimer);
         await supervisor.stop();
+        await taskEventChannel?.stop();
         drainRepairs();
         await repairRun;
+        await externalSyncRun;
       } finally {
         interpreter.dispose();
         agent.close();
@@ -540,6 +615,7 @@ export async function createLiveService(
         bitableAuthorityStore?.close();
         focusStateStore?.close();
         currentStateStore.close();
+        externalSyncStore.close();
       }
     },
   };

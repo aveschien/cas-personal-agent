@@ -7,6 +7,7 @@ import type {
 import type { BitableRecordClient } from "./bitable-state-projector.js";
 import { initializeStorage } from "./storage.js";
 import type { CurrentStateStore } from "./current-state-store.js";
+import type { ExternalSyncStore } from "./external-sync-store.js";
 
 export interface ActionWorkerOptions {
   readonly databasePath: string;
@@ -15,6 +16,7 @@ export interface ActionWorkerOptions {
   readonly actionLinksTableId: string;
   readonly retryDelayMs?: number;
   readonly currentState?: CurrentStateStore;
+  readonly verificationQueue?: ExternalSyncStore;
 }
 
 export interface ActionWorker {
@@ -119,6 +121,13 @@ export function createActionWorker(options: ActionWorkerOptions): ActionWorker {
           externalObjectId: created.externalId,
           status: "confirmed",
         });
+        options.verificationQueue?.enqueue({
+          connector: "ticktick",
+          entityType: "action_link",
+          entityKey: payload.request.actionKey,
+          reason: "cas_write",
+          payload: { projectId: created.projectId, externalId: created.externalId },
+        }, now);
         await options.bitable.update(
           options.actionLinksTableId,
           payload.actionLinkRecordId,
@@ -170,6 +179,17 @@ export function createActionWorker(options: ActionWorkerOptions): ActionWorker {
               status: "failed",
             });
           }
+          options.verificationQueue?.enqueue({
+            connector: "ticktick",
+            entityType: "action_link",
+            entityKey: payload.request.actionKey,
+            reason: "cas_failure",
+            payload: {
+              ...(options.currentState?.actionExecution(payload.request.actionKey)?.externalObjectId === undefined
+                ? {}
+                : { externalId: options.currentState.actionExecution(payload.request.actionKey)!.externalObjectId }),
+            },
+          }, now);
           try {
             await options.bitable.update(
               options.actionLinksTableId,

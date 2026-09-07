@@ -203,10 +203,11 @@ export function createAuthoritativeActionReader(
             memoryCandidates.push(candidate);
           }
 
-          await options.bitable.update(
-            options.actionLinksTableId,
-            record.recordId,
-            {
+          if (correctedFields.length > 0) {
+            await options.bitable.update(
+              options.actionLinksTableId,
+              record.recordId,
+              {
               行动: title,
               外部状态镜像: external.status,
               最近同步: now,
@@ -217,8 +218,9 @@ export function createAuthoritativeActionReader(
               ...(details.assignees === undefined
                 ? {}
                 : { 负责人: details.assignees.join("、") || null }),
-            },
-          );
+              },
+            );
+          }
         } catch (error) {
           options.onError?.(error);
         }
