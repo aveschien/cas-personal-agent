@@ -65,6 +65,7 @@ export interface ReminderProjectionSink {
     itemRecordId: string,
     projectRecordId?: string,
   ): Promise<void>;
+  cancelForItem?(itemRecordId: string, reason: string, now?: string): void;
 }
 
 export interface ActionProjectionSink {
@@ -339,6 +340,13 @@ export function createBitableStateProjector(
           projectedAt,
         );
         itemRecordIds.set(item.key, record.recordId);
+        if (["completed", "abandoned", "archived"].includes(item.status)) {
+          options.reminders.cancelForItem?.(
+            record.recordId,
+            `item ${item.key} became ${item.status}`,
+            projectedAt,
+          );
+        }
       }
 
       const resolveItem = async (key: string): Promise<string> => {

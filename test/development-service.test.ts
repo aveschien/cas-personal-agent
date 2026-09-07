@@ -65,7 +65,7 @@ test("the development service starts, reports health, ingests NDJSON, and restar
     assert.deepEqual(await readOutput(firstRun), {
       status: "ok",
       mode: "development",
-      storage: { journalMode: "wal", schemaVersion: 6 },
+      storage: { journalMode: "wal", schemaVersion: 7 },
     });
     firstRun.process.stdin.write(`${JSON.stringify(eventCommand)}\n`);
     assert.deepEqual(await readOutput(firstRun), {

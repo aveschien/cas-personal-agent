@@ -333,6 +333,27 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
     database.prepare("SELECT * FROM current_action_links WHERE action_key = ?").get(key) as
       | ActionRow
       | undefined;
+  const cancelRemindersForItemRecord = (itemRecordId: string, reason: string, now: string): void => {
+    const keys = database.prepare("SELECT id FROM reminders WHERE item_record_id = ? AND status IN ('pending', 'failed')").all(itemRecordId) as unknown as { id: string }[];
+    database.prepare(
+      `UPDATE reminders SET status = 'cancelled', cancelled_at = ?, version = version + 1, updated_at = ?
+       WHERE item_record_id = ? AND status IN ('pending', 'failed')`,
+    ).run(now, now, itemRecordId);
+    for (const { id } of keys) {
+      database.prepare(
+        `UPDATE outbox SET status = 'dead', next_attempt_at = NULL, last_error_json = ?, updated_at = ?
+         WHERE operation_type = 'reminder.deliver' AND status IN ('pending', 'retry', 'running')
+           AND (idempotency_key = ? OR idempotency_key LIKE ?)`,
+      ).run(JSON.stringify({ message: reason }), now, `reminder.deliver:${id}`, `reminder.deliver:${id}:%`);
+    }
+  };
+  const invalidateReminderDelivery = (reminderKey: string, reason: string, now: string): void => {
+    database.prepare(
+      `UPDATE outbox SET status = 'dead', next_attempt_at = NULL, last_error_json = ?, updated_at = ?
+       WHERE operation_type = 'reminder.deliver' AND status IN ('pending', 'retry', 'running')
+         AND (idempotency_key = ? OR idempotency_key LIKE ?)`,
+    ).run(JSON.stringify({ message: reason }), now, `reminder.deliver:${reminderKey}`, `reminder.deliver:${reminderKey}:%`);
+  };
 
   const hasVersion = (
     sourceKind: CurrentStateSource,
@@ -495,6 +516,9 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
             input.sourceKind === "user_intent" ? "pending" : "local_only",
             input.occurredAt,
           );
+        if (["completed", "abandoned", "archived"].includes(change.status) && current?.record_id !== null && current?.record_id !== undefined) {
+          cancelRemindersForItemRecord(current.record_id, `item ${change.key} became ${change.status}`, input.occurredAt);
+        }
         effectiveItems.push(itemFromRow(item(change.key)!));
       }
 
@@ -1011,6 +1035,28 @@ export function createCurrentStateStore(databasePath: string): CurrentStateStore
           input.observedAt,
           input.actionKey,
         );
+        if (Object.prototype.hasOwnProperty.call(input, "deadlineAt")) {
+          const reminderKey = `${input.actionKey}-deadline`;
+          const reminder = database.prepare("SELECT fire_at FROM reminders WHERE id = ?").get(reminderKey) as { fire_at: string } | undefined;
+          if (reminder !== undefined && input.deadlineAt !== undefined && reminder.fire_at !== input.deadlineAt) {
+            if (input.deadlineAt === null) {
+              database.prepare("UPDATE reminders SET status = 'cancelled', cancelled_at = ?, version = version + 1, updated_at = ? WHERE id = ?")
+                .run(input.observedAt, input.observedAt, reminderKey);
+            } else {
+              database.prepare(
+                `UPDATE reminders SET fire_at = ?, status = 'pending', fired_at = NULL, cancelled_at = NULL,
+                 version = version + 1, schedule_fingerprint = ?, source_event_id = ?, updated_at = ? WHERE id = ?`,
+              ).run(input.deadlineAt, `external:${input.fingerprint}`, sourceEventId, input.observedAt, reminderKey);
+            }
+            invalidateReminderDelivery(reminderKey, "external deadline changed", input.observedAt);
+          }
+        }
+        if (input.status === "completed") {
+          const owningItem = item(current.item_key);
+          if (owningItem?.record_id !== null && owningItem?.record_id !== undefined) {
+            cancelRemindersForItemRecord(owningItem.record_id, `external action ${input.actionKey} completed`, input.observedAt);
+          }
+        }
         database.exec("COMMIT");
         return true;
       } catch (error) {

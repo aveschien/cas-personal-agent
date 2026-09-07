@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const schemaVersion = 6;
+const schemaVersion = 7;
 const requiredTables = [
   "bitable_authoritative_corrections",
   "bitable_projection_snapshots",
@@ -165,6 +165,9 @@ export function initializeStorage(database: DatabaseSync): void {
       payload_json TEXT NOT NULL,
       source_event_id TEXT NOT NULL,
       fired_at TEXT,
+      cancelled_at TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
+      schedule_fingerprint TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     ) STRICT;
@@ -367,6 +370,16 @@ export function initializeStorage(database: DatabaseSync): void {
     if (!actionColumns.has(name)) {
       database.exec(`ALTER TABLE current_action_links ADD COLUMN ${name} ${definition}`);
     }
+  }
+  const reminderColumns = new Set(
+    (database.prepare("PRAGMA table_info(reminders)").all() as unknown as { name: string }[]).map((column) => column.name),
+  );
+  for (const [name, definition] of [
+    ["cancelled_at", "TEXT"],
+    ["version", "INTEGER NOT NULL DEFAULT 1"],
+    ["schedule_fingerprint", "TEXT"],
+  ] as const) {
+    if (!reminderColumns.has(name)) database.exec(`ALTER TABLE reminders ADD COLUMN ${name} ${definition}`);
   }
   database.exec(`
     INSERT OR IGNORE INTO schema_migrations (version, applied_at)

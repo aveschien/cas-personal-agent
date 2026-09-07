@@ -26,6 +26,7 @@ export interface ReminderWorkerOptions {
   readonly notifier: ReminderNotifier;
   readonly retryDelayMs?: number;
   readonly maxAttempts?: number;
+  readonly onVerificationNeeded?: (action: { readonly actionKey: string; readonly factOwner: "ticktick" | "feishu_task"; readonly externalObjectId: string }) => void;
 }
 
 export interface ReminderWorker {
@@ -41,6 +42,7 @@ interface DueReminderRow {
   kind: ReminderKind;
   payload_json: string;
   source_event_id: string;
+  version: number;
 }
 
 interface DeliveryRow {
@@ -51,11 +53,12 @@ interface DeliveryRow {
 
 interface DeliveryPayload extends ReminderDelivery {
   readonly maxAttempts: number;
+  readonly reminderVersion: number;
 }
 
-function deliveryIdempotencyKey(reminderKey: string): string {
+function deliveryIdempotencyKey(reminderKey: string, version: number): string {
   return `cas-reminder-${createHash("sha256")
-    .update(reminderKey)
+    .update(`${reminderKey}:${version}`)
     .digest("hex")
     .slice(0, 32)}`;
 }
@@ -79,6 +82,8 @@ function parseDeliveryPayload(value: string): DeliveryPayload {
     payload === null ||
     !("maxAttempts" in payload) ||
     typeof payload.maxAttempts !== "number" ||
+    !("reminderVersion" in payload) ||
+    typeof payload.reminderVersion !== "number" ||
     !("reminderKey" in payload) ||
     typeof payload.reminderKey !== "string" ||
     !("idempotencyKey" in payload) ||
@@ -127,13 +132,13 @@ export function createReminderWorker(
     const row = database
       .prepare(
         `SELECT id, item_record_id, project_record_id, fire_at, kind,
-                payload_json, source_event_id
+                payload_json, source_event_id, version
          FROM reminders r
          WHERE status = 'pending'
            AND julianday(fire_at) <= julianday(?)
            AND NOT EXISTS (
              SELECT 1 FROM outbox o
-             WHERE o.idempotency_key = 'reminder.deliver:' || r.id
+             WHERE o.idempotency_key = 'reminder.deliver:' || r.id || ':' || r.version
            )
          ORDER BY fire_at ASC, created_at ASC
          LIMIT 1`,
@@ -150,8 +155,9 @@ export function createReminderWorker(
         : row.id;
     const payload: DeliveryPayload = {
       maxAttempts,
+      reminderVersion: row.version,
       reminderKey: row.id,
-      idempotencyKey: deliveryIdempotencyKey(row.id),
+      idempotencyKey: deliveryIdempotencyKey(row.id, row.version),
       itemRecordId: row.item_record_id,
       ...(row.project_record_id === null
         ? {}
@@ -177,7 +183,7 @@ export function createReminderWorker(
       )
       .run(
         randomUUID(),
-        `reminder.deliver:${row.id}`,
+        `reminder.deliver:${row.id}:${row.version}`,
         JSON.stringify(payload),
         now,
         now,
@@ -215,6 +221,35 @@ export function createReminderWorker(
       let payload: DeliveryPayload | undefined;
       try {
         payload = parseDeliveryPayload(row.payload_json);
+        const current = database.prepare("SELECT status, version FROM reminders WHERE id = ?").get(payload.reminderKey) as
+          | { status: string; version: number }
+          | undefined;
+        if (current?.status !== "pending" || current.version !== payload.reminderVersion) {
+          database.prepare(
+            `UPDATE outbox SET status = 'dead', attempt_count = attempt_count + 1,
+             next_attempt_at = NULL, last_error_json = ?, updated_at = ? WHERE id = ?`,
+          ).run(JSON.stringify({ message: "reminder version is no longer current" }), now, row.id);
+          return true;
+        }
+        const itemState = database.prepare("SELECT status FROM current_items WHERE record_id = ?").get(payload.itemRecordId) as
+          | { status: string }
+          | undefined;
+        const actionState = database.prepare(
+          "SELECT action_key, fact_owner, external_object_id, external_status FROM current_action_links WHERE action_key || '-deadline' = ?",
+        ).get(payload.reminderKey) as { action_key: string; fact_owner: "ticktick" | "feishu_task" | "bitable"; external_object_id: string | null; external_status: string } | undefined;
+        if (["completed", "abandoned", "archived"].includes(itemState?.status ?? "") || actionState?.external_status === "completed") {
+          database.prepare("UPDATE reminders SET status = 'cancelled', cancelled_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?")
+            .run(now, now, payload.reminderKey, payload.reminderVersion);
+          database.prepare("UPDATE outbox SET status = 'dead', attempt_count = attempt_count + 1, last_error_json = ?, updated_at = ? WHERE id = ?")
+            .run(JSON.stringify({ message: "current fact is already complete" }), now, row.id);
+          return true;
+        }
+        if (actionState?.external_status === "unknown") {
+          if (actionState.fact_owner !== "bitable" && actionState.external_object_id !== null) {
+            options.onVerificationNeeded?.({ actionKey: actionState.action_key, factOwner: actionState.fact_owner, externalObjectId: actionState.external_object_id });
+          }
+          throw new Error("external action state is unknown; reminder deferred for verification");
+        }
         await options.notifier.notify(payload);
         database.exec("BEGIN IMMEDIATE");
         try {
@@ -230,9 +265,9 @@ export function createReminderWorker(
             .prepare(
               `UPDATE reminders
                SET status = 'fired', fired_at = ?, updated_at = ?
-               WHERE id = ? AND status = 'pending'`,
+               WHERE id = ? AND status = 'pending' AND version = ?`,
             )
-            .run(now, now, payload.reminderKey);
+            .run(now, now, payload.reminderKey, payload.reminderVersion);
           database.exec("COMMIT");
         } catch (error) {
           database.exec("ROLLBACK");

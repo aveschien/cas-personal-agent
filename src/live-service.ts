@@ -442,12 +442,18 @@ export async function createLiveService(
       ? undefined
       : createReminderWorker({
           databasePath: config.databasePath,
-          notifier:
+        notifier:
             dependencies.reminderNotifier ??
             createLarkReminderNotifier({
               userId: config.allowedUserIds[0]!,
               runner: processCommandRunner,
             }),
+          onVerificationNeeded(action) {
+            externalSyncStore.enqueue({
+              connector: action.factOwner, entityType: "action_link", entityKey: action.actionKey,
+              reason: "explicit_refresh", payload: { externalId: action.externalObjectId, ...(action.factOwner === "ticktick" && config.personalActions?.enabled === true ? { projectId: config.personalActions.projectId } : {}) },
+            });
+          },
         });
   const actionWorker =
     actionOutbox === undefined ||

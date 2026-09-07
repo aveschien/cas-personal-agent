@@ -219,7 +219,7 @@ test("Bitable Project, Item, and Action Link migrate idempotently with stable li
   }
 });
 
-test("schema v6 migration preserves Events, Pi sessions, outbox, and reminders", async () => {
+test("schema v7 migration preserves Events, Pi sessions, outbox, and reminders", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cas-current-schema-"));
   const databasePath = join(directory, "events.sqlite");
   const database = new DatabaseSync(databasePath);
@@ -270,7 +270,7 @@ test("schema v6 migration preserves Events, Pi sessions, outbox, and reminders",
     }
     assert.equal(
       (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      6,
+      7,
     );
   } finally {
     migrated.close();
@@ -278,7 +278,7 @@ test("schema v6 migration preserves Events, Pi sessions, outbox, and reminders",
   }
 });
 
-test("schema v6 adds external verification metadata to an existing v4 Action table", async () => {
+test("schema v7 adds external verification metadata to an existing v4 Action table", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cas-current-v4-action-"));
   const databasePath = join(directory, "events.sqlite");
   const database = new DatabaseSync(databasePath);
