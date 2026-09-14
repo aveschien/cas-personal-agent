@@ -51,6 +51,27 @@ npm run start:live
 
 进程会等待 `lark-cli` 的精确 ready 标记，并在收到 SIGTERM/SIGINT 后优雅关闭事件流、Pi 会话和 SQLite。systemd 模板位于 `deploy/cas-personal-agent.service`。
 
+## Grok HTTP ingest
+
+飞书长连接仍是生产入口并继续作为备份。另外可启用绑定在本机的 `POST /v1/ingest`，把 Grok Bot 的消息送进同一条 `agent.ingest` 流水线。设置 `CAS_INGEST_TOKEN` 后才会监听；默认只绑 `127.0.0.1:8787`，不要默认改成 `0.0.0.0`。
+
+`userId` 必须是已在 `CAS_ALLOWED_USER_IDS` 里的飞书 `open_id`。Grok 来源**只把 JSON acknowledgement 返回给 HTTP 调用方**，不会用 `lark-cli` 发飞书私聊，也不要求飞书 `message_id`。飞书来源的回复路径不变。
+
+```bash
+curl -sS http://127.0.0.1:8787/v1/ingest \
+  -H "Authorization: Bearer $CAS_INGEST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceMessageId": "grok-msg-1",
+    "receivedAt": "2026-09-14T08:00:00.000Z",
+    "userId": "ou_your_feishu_user_id",
+    "rawText": "把报价页改完",
+    "rawPayload": { "channel": "grok" }
+  }'
+```
+
+成功时响应形如 `{"status":"completed","acknowledgement":"..."}`；缺令牌或令牌错误返回 401；不在允许名单的 `userId` 返回 403。
+
 无 root 权限的单用户 VPS 可安装用户级常驻服务；当前用户已开启 linger 时，退出 SSH 后仍会持续监听飞书：
 
 ```bash

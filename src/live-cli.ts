@@ -26,7 +26,12 @@ export async function runLiveCli(options: RunLiveCliOptions): Promise<void> {
   const service = await (options.serviceFactory ?? createLiveService)(config);
   try {
     await service.start();
-    log("[cas] ready channel=lark runtime=pi");
+    const ingestUrl = service.httpIngestUrl?.();
+    log(
+      ingestUrl === undefined
+        ? "[cas] ready channel=lark runtime=pi"
+        : `[cas] ready channel=lark,http ingest=${ingestUrl}/v1/ingest runtime=pi`,
+    );
     await Promise.race([
       options.waitForShutdown,
       service.waitForExit(),

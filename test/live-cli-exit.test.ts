@@ -26,6 +26,7 @@ test("the live CLI stops and fails when its event consumer exits", async () => {
         waitForExit: async () => {
           throw new Error("lark-cli exited unexpectedly (code 23)");
         },
+        httpIngestUrl: () => undefined,
       }),
       log: () => undefined,
     }),

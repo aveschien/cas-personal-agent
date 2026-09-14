@@ -21,6 +21,10 @@ import { createCollaborativeActionOutbox } from "./collaborative-action-outbox.j
 import { createCollaborativeActionWorker } from "./collaborative-action-worker.js";
 import { createDevelopmentAgent } from "./development-agent.js";
 import {
+  createHttpIngestServer,
+  type HttpIngestServer,
+} from "./http-ingest-server.js";
+import {
   createBitableStateProjector,
   type BitableStateProjector,
   type BitableTables,
@@ -108,12 +112,21 @@ export interface LiveServiceConfig {
     readonly requestBudget?: number;
     readonly timeoutMs?: number;
   };
+  readonly httpIngest?:
+    | { readonly enabled: false }
+    | {
+        readonly enabled: true;
+        readonly host: string;
+        readonly port: number;
+        readonly token: string;
+      };
 }
 
 export interface LiveService {
   start(): Promise<void>;
   stop(): Promise<void>;
   waitForExit(): Promise<void>;
+  httpIngestUrl(): string | undefined;
 }
 
 export interface RuntimeFactoryInput {
@@ -147,6 +160,7 @@ export interface LiveServiceDependencies {
   readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
   readonly taskEventChannel?: LarkTaskEventChannel;
+  readonly ingestHttp?: HttpIngestServer;
 }
 
 export async function createLiveService(
@@ -481,6 +495,19 @@ export async function createLiveService(
         });
   const channel = dependencies.channel ?? createLarkEventChannel();
   const replies = dependencies.replies ?? createLarkReplyAdapter();
+  const ingestHttp =
+    dependencies.ingestHttp ??
+    (config.httpIngest?.enabled === true
+      ? createHttpIngestServer({
+          host: config.httpIngest.host,
+          port: config.httpIngest.port,
+          token: config.httpIngest.token,
+          ingest: (event) => agent.ingest(event),
+          ...(dependencies.clock === undefined
+            ? {}
+            : { clock: dependencies.clock }),
+        })
+      : undefined);
   const batcher =
     config.messageBatching?.enabled === true
       ? createMessageBatcher({
@@ -602,11 +629,13 @@ export async function createLiveService(
       }
       try {
         await supervisor.start();
+        await ingestHttp?.start();
         await taskEventChannel?.start((signal) => {
           externalCollaborativeSync?.signalExternalId(signal.taskGuid, signal.occurredAt);
           runExternalSync(false);
         });
       } catch (error) {
+        await ingestHttp?.stop().catch(onError);
         await taskEventChannel?.stop().catch(onError);
         await supervisor.stop().catch(onError);
         throw error;
@@ -624,6 +653,10 @@ export async function createLiveService(
       return channel.waitForExit();
     },
 
+    httpIngestUrl() {
+      return ingestHttp?.url();
+    },
+
     async stop() {
       if (stopped) {
         return;
@@ -634,6 +667,7 @@ export async function createLiveService(
           clearInterval(repairTimer);
         }
         if (externalSyncTimer !== undefined) clearInterval(externalSyncTimer);
+        await ingestHttp?.stop();
         await supervisor.stop();
         await taskEventChannel?.stop();
         drainRepairs();

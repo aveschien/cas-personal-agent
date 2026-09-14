@@ -44,6 +44,7 @@ test("the raw Event remains durable when interpretation fails", async () => {
     );
 
     assert.deepEqual(agent.getEvent("message-failure"), {
+      source: "feishu",
       sourceMessageId: "message-failure",
       userId: "user-1",
       rawText: "先记下来，稍后再处理",

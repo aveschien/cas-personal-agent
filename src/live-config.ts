@@ -31,6 +31,9 @@ export interface LiveEnvironment {
   readonly CAS_EXTERNAL_SYNC_INTERVAL_MS?: string;
   readonly CAS_EXTERNAL_SYNC_REQUEST_BUDGET?: string;
   readonly CAS_EXTERNAL_SYNC_TIMEOUT_MS?: string;
+  readonly CAS_INGEST_TOKEN?: string;
+  readonly CAS_INGEST_HOST?: string;
+  readonly CAS_INGEST_PORT?: string;
 }
 
 function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
@@ -90,6 +93,14 @@ function positiveInteger(
   return parsed;
 }
 
+function ingestPort(value: string | undefined): number {
+  const parsed = positiveInteger(value, 8787, "CAS_INGEST_PORT");
+  if (parsed > 65_535) {
+    throw new Error("CAS_INGEST_PORT must be between 1 and 65535");
+  }
+  return parsed;
+}
+
 function thinkingLevel(value: string | undefined): PiThinkingLevel {
   const normalized = value?.trim() || "max";
   if (
@@ -127,6 +138,19 @@ function tickTickBaseUrl(value: string | undefined): string {
     );
   }
   return url.toString().replace(/\/$/, "");
+}
+
+function httpIngest(environment: LiveEnvironment): LiveServiceConfig["httpIngest"] {
+  const token = environment.CAS_INGEST_TOKEN?.trim();
+  if (token === undefined || token.length === 0) {
+    return { enabled: false };
+  }
+  return {
+    enabled: true,
+    host: environment.CAS_INGEST_HOST?.trim() || "127.0.0.1",
+    port: ingestPort(environment.CAS_INGEST_PORT),
+    token,
+  };
 }
 
 export function loadLiveConfig(
@@ -226,6 +250,7 @@ export function loadLiveConfig(
         }
       : { enabled: false },
     collaborativeActions: { enabled: feishuTaskEnabled },
+    httpIngest: httpIngest(environment),
     messageBatching: {
       enabled: messageBatchingEnabled,
       settleMs: messageSettleMs,

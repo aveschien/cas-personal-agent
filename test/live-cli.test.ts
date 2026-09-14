@@ -16,6 +16,7 @@ test("the live CLI starts once and closes resources after shutdown", async () =>
       lifecycle.push("stop");
     },
     waitForExit: () => new Promise<void>(() => undefined),
+    httpIngestUrl: () => undefined,
   };
 
   const running = runLiveCli({

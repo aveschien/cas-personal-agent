@@ -43,6 +43,7 @@ test("live config resolves durable paths and requires an explicit allowlist", ()
       },
       personalActions: { enabled: false },
       collaborativeActions: { enabled: false },
+      httpIngest: { enabled: false },
       messageBatching: {
         enabled: true,
         settleMs: 8_000,
@@ -198,5 +199,60 @@ test("TickTick writes require an explicit enable flag and credentials", () => {
         "/srv/cas-personal-agent",
       ),
     /official TickTick or Dida365/,
+  );
+});
+
+test("HTTP ingest is disabled until a token is set and binds loopback by default", () => {
+  const common = {
+    CAS_ALLOWED_USER_IDS: "ou_one",
+    CAS_BITABLE_BASE_TOKEN: "bas_state",
+    CAS_BITABLE_PROJECTS_TABLE_ID: "tbl_projects",
+    CAS_BITABLE_ITEMS_TABLE_ID: "tbl_items",
+    CAS_BITABLE_ACTION_LINKS_TABLE_ID: "tbl_actions",
+  };
+  assert.deepEqual(
+    loadLiveConfig(common, "/srv/cas-personal-agent").httpIngest,
+    { enabled: false },
+  );
+  assert.deepEqual(
+    loadLiveConfig(
+      { ...common, CAS_INGEST_TOKEN: "  local-ingest-token  " },
+      "/srv/cas-personal-agent",
+    ).httpIngest,
+    {
+      enabled: true,
+      host: "127.0.0.1",
+      port: 8787,
+      token: "local-ingest-token",
+    },
+  );
+  assert.deepEqual(
+    loadLiveConfig(
+      {
+        ...common,
+        CAS_INGEST_TOKEN: "local-ingest-token",
+        CAS_INGEST_HOST: "127.0.0.1",
+        CAS_INGEST_PORT: "9876",
+      },
+      "/srv/cas-personal-agent",
+    ).httpIngest,
+    {
+      enabled: true,
+      host: "127.0.0.1",
+      port: 9876,
+      token: "local-ingest-token",
+    },
+  );
+  assert.throws(
+    () =>
+      loadLiveConfig(
+        {
+          ...common,
+          CAS_INGEST_TOKEN: "local-ingest-token",
+          CAS_INGEST_PORT: "70000",
+        },
+        "/srv/cas-personal-agent",
+      ),
+    /CAS_INGEST_PORT must be between 1 and 65535/,
   );
 });
