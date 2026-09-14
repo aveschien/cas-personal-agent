@@ -140,7 +140,9 @@ function tickTickBaseUrl(value: string | undefined): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function httpIngest(environment: LiveEnvironment): LiveServiceConfig["httpIngest"] {
+function httpIngest(
+  environment: LiveEnvironment,
+): NonNullable<LiveServiceConfig["httpIngest"]> {
   const token = environment.CAS_INGEST_TOKEN?.trim();
   if (token === undefined || token.length === 0) {
     return { enabled: false };
