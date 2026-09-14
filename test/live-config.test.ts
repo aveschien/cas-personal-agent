@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { loadLiveConfig } from "../src/live-config.js";
+import { loadLiveConfig, isLoopbackHost } from "../src/live-config.js";
 
 test("live config resolves durable paths and requires an explicit allowlist", () => {
   const cwd = "/srv/cas-personal-agent";
@@ -255,4 +255,26 @@ test("HTTP ingest is disabled until a token is set and binds loopback by default
       ),
     /CAS_INGEST_PORT must be between 1 and 65535/,
   );
+  assert.deepEqual(
+    loadLiveConfig(
+      {
+        ...common,
+        CAS_INGEST_TOKEN: "local-ingest-token",
+        CAS_INGEST_HOST: "0.0.0.0",
+        CAS_INGEST_QUEUE_WAIT_MS: "5000",
+      },
+      "/srv/cas-personal-agent",
+    ).httpIngest,
+    {
+      enabled: true,
+      host: "0.0.0.0",
+      port: 8787,
+      token: "local-ingest-token",
+      queueWaitMs: 5_000,
+    },
+  );
+  assert.equal(isLoopbackHost("127.0.0.1"), true);
+  assert.equal(isLoopbackHost("localhost"), true);
+  assert.equal(isLoopbackHost("::1"), true);
+  assert.equal(isLoopbackHost("0.0.0.0"), false);
 });

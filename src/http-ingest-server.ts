@@ -10,9 +10,23 @@ import type {
   ChannelEvent,
   IngestResult,
 } from "./development-agent.js";
+import { IngestBusyError } from "./serial-queue.js";
 
 const maxBodyBytes = 1_048_576;
 const ingestPath = "/v1/ingest";
+export const grokSourceMessageIdPrefix = "grok:";
+export const grokSourceMessageIdAltPrefix = "grok-";
+
+export function canonicalizeGrokSourceMessageId(id: string): string {
+  const trimmed = id.trim();
+  if (
+    trimmed.startsWith(grokSourceMessageIdPrefix) ||
+    trimmed.startsWith(grokSourceMessageIdAltPrefix)
+  ) {
+    return trimmed;
+  }
+  return `${grokSourceMessageIdPrefix}${trimmed}`;
+}
 
 export interface HttpIngestServer {
   start(): Promise<void>;
@@ -80,7 +94,6 @@ async function readBody(request: IncomingMessage): Promise<string> {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
     if (size > maxBodyBytes) {
-      request.destroy();
       throw new PayloadTooLargeError();
     }
     chunks.push(buffer);
@@ -117,7 +130,7 @@ export function parseIngestRequest(
   }
 
   return {
-    sourceMessageId: value.sourceMessageId,
+    sourceMessageId: canonicalizeGrokSourceMessageId(value.sourceMessageId),
     receivedAt,
     userId: value.userId,
     rawText: value.rawText,
@@ -178,6 +191,7 @@ export function createHttpIngestServer(
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
         writeJson(response, 413, { error: "payload_too_large" });
+        request.destroy();
         return;
       }
       throw error;
@@ -208,7 +222,14 @@ export function createHttpIngestServer(
     try {
       const result = await options.ingest(event);
       writeJson(response, result.status === "rejected" ? 403 : 200, result);
-    } catch {
+    } catch (error) {
+      if (error instanceof IngestBusyError) {
+        writeJson(response, 503, {
+          error: "ingest_busy",
+          message: error.message,
+        });
+        return;
+      }
       writeJson(response, 500, {
         status: "failed",
         acknowledgement: "消息已收到，但这次处理没有完成。请稍后重试。",

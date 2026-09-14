@@ -34,6 +34,7 @@ export interface LiveEnvironment {
   readonly CAS_INGEST_TOKEN?: string;
   readonly CAS_INGEST_HOST?: string;
   readonly CAS_INGEST_PORT?: string;
+  readonly CAS_INGEST_QUEUE_WAIT_MS?: string;
 }
 
 function required(environment: LiveEnvironment, name: keyof LiveEnvironment): string {
@@ -140,6 +141,16 @@ function tickTickBaseUrl(value: string | undefined): string {
   return url.toString().replace(/\/$/, "");
 }
 
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1"
+  );
+}
+
 function httpIngest(
   environment: LiveEnvironment,
 ): NonNullable<LiveServiceConfig["httpIngest"]> {
@@ -147,11 +158,21 @@ function httpIngest(
   if (token === undefined || token.length === 0) {
     return { enabled: false };
   }
+  const queueWaitMs =
+    environment.CAS_INGEST_QUEUE_WAIT_MS === undefined ||
+    environment.CAS_INGEST_QUEUE_WAIT_MS.trim().length === 0
+      ? undefined
+      : positiveInteger(
+          environment.CAS_INGEST_QUEUE_WAIT_MS,
+          120_000,
+          "CAS_INGEST_QUEUE_WAIT_MS",
+        );
   return {
     enabled: true,
     host: environment.CAS_INGEST_HOST?.trim() || "127.0.0.1",
     port: ingestPort(environment.CAS_INGEST_PORT),
     token,
+    ...(queueWaitMs === undefined ? {} : { queueWaitMs }),
   };
 }
 

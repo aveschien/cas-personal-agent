@@ -53,9 +53,11 @@ npm run start:live
 
 ## Grok HTTP ingest
 
-飞书长连接仍是生产入口并继续作为备份。另外可启用绑定在本机的 `POST /v1/ingest`，把 Grok Bot 的消息送进同一条 `agent.ingest` 流水线。设置 `CAS_INGEST_TOKEN` 后才会监听；默认只绑 `127.0.0.1:8787`，不要默认改成 `0.0.0.0`。
+飞书长连接仍是生产入口并继续作为备份。另外可启用绑定在本机的 `POST /v1/ingest`，把 Grok Bot 的消息直接送进 `agent.ingest`（不经过 Supervisor，因此不会发飞书回复）。设置 `CAS_INGEST_TOKEN` 后才会监听；默认只绑 `127.0.0.1:8787`，不要默认改成 `0.0.0.0`。HTTP ingest 若绑定失败，飞书长连接仍继续运行。
 
-`userId` 必须是已在 `CAS_ALLOWED_USER_IDS` 里的飞书 `open_id`。Grok 来源**只把 JSON acknowledgement 返回给 HTTP 调用方**，不会用 `lark-cli` 发飞书私聊，也不要求飞书 `message_id`。飞书来源的回复路径不变。
+`userId` 必须是已在 `CAS_ALLOWED_USER_IDS` 里的飞书 `open_id`。`sourceMessageId` 若不以 `grok:` / `grok-` 开头，服务会改存为 `grok:<id>`，以免和飞书 `message_id` 撞 UNIQUE 键。Grok 来源**只把 JSON acknowledgement 返回给 HTTP 调用方**，不会用 `lark-cli` 发飞书私聊，也不要求飞书 `message_id`。飞书来源的回复路径不变。
+
+飞书与 Grok 共用同一条 Pi 回合队列：HTTP 会等待当前飞书回合结束，而不是并发导致 Pi 报错。默认最多等 120 秒（`CAS_INGEST_QUEUE_WAIT_MS`），超时返回 503。
 
 ```bash
 curl -sS http://127.0.0.1:8787/v1/ingest \
