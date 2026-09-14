@@ -19,7 +19,16 @@ import {
 } from "./current-attention.js";
 import { createCollaborativeActionOutbox } from "./collaborative-action-outbox.js";
 import { createCollaborativeActionWorker } from "./collaborative-action-worker.js";
-import { createDevelopmentAgent } from "./development-agent.js";
+import {
+  createDevelopmentAgent,
+  type ChannelEvent,
+} from "./development-agent.js";
+import {
+  createHttpIngestServer,
+  type HttpIngestServer,
+} from "./http-ingest-server.js";
+import { isLoopbackHost } from "./live-config.js";
+import { createSerialQueue } from "./serial-queue.js";
 import {
   createBitableStateProjector,
   type BitableStateProjector,
@@ -108,12 +117,24 @@ export interface LiveServiceConfig {
     readonly requestBudget?: number;
     readonly timeoutMs?: number;
   };
+  readonly httpIngest?:
+    | { readonly enabled: false }
+    | {
+        readonly enabled: true;
+        readonly host: string;
+        readonly port: number;
+        readonly token: string;
+        readonly queueWaitMs?: number;
+      };
 }
+
+export const defaultHttpIngestQueueWaitMs = 120_000;
 
 export interface LiveService {
   start(): Promise<void>;
   stop(): Promise<void>;
   waitForExit(): Promise<void>;
+  httpIngestUrl(): string | undefined;
 }
 
 export interface RuntimeFactoryInput {
@@ -147,6 +168,7 @@ export interface LiveServiceDependencies {
   readonly messageImageLoader?: MessageImageLoader;
   readonly reminderNotifier?: ReminderNotifier;
   readonly taskEventChannel?: LarkTaskEventChannel;
+  readonly ingestHttp?: HttpIngestServer;
 }
 
 export async function createLiveService(
@@ -481,12 +503,36 @@ export async function createLiveService(
         });
   const channel = dependencies.channel ?? createLarkEventChannel();
   const replies = dependencies.replies ?? createLarkReplyAdapter();
+  const ingestTurns = createSerialQueue();
+  const serializedIngest = (event: ChannelEvent) =>
+    ingestTurns.run(() => agent.ingest(event));
+  const httpIngestQueueWaitMs =
+    config.httpIngest?.enabled === true
+      ? (config.httpIngest.queueWaitMs ?? defaultHttpIngestQueueWaitMs)
+      : defaultHttpIngestQueueWaitMs;
+  const serializedHttpIngest = (event: ChannelEvent) =>
+    ingestTurns.run(() => agent.ingest(event), {
+      waitTimeoutMs: httpIngestQueueWaitMs,
+    });
+  const ingestHttp =
+    dependencies.ingestHttp ??
+    (config.httpIngest?.enabled === true
+      ? createHttpIngestServer({
+          host: config.httpIngest.host,
+          port: config.httpIngest.port,
+          token: config.httpIngest.token,
+          ingest: serializedHttpIngest,
+          ...(dependencies.clock === undefined
+            ? {}
+            : { clock: dependencies.clock }),
+        })
+      : undefined);
   const batcher =
     config.messageBatching?.enabled === true
       ? createMessageBatcher({
           databasePath: config.databasePath,
           allowedUserIds: config.allowedUserIds,
-          agent,
+          agent: { ingest: serializedIngest },
           replies,
           images:
             dependencies.messageImageLoader ?? createLarkMessageImageLoader(),
@@ -498,7 +544,7 @@ export async function createLiveService(
   const supervisor = createSupervisor({
     channel,
     replies,
-    agent,
+    agent: { ingest: serializedIngest },
     ...(batcher === undefined ? {} : { batcher }),
     onError,
   });
@@ -602,11 +648,38 @@ export async function createLiveService(
       }
       try {
         await supervisor.start();
+      } catch (error) {
+        await supervisor.stop().catch(onError);
+        throw error;
+      }
+      try {
+        await ingestHttp?.start();
+        if (
+          config.httpIngest?.enabled === true &&
+          !isLoopbackHost(config.httpIngest.host)
+        ) {
+          onError(
+            new Error(
+              `CAS_INGEST_HOST=${config.httpIngest.host} is not loopback; HTTP ingest is reachable beyond this machine`,
+            ),
+          );
+        }
+      } catch (error) {
+        await ingestHttp?.stop().catch(onError);
+        const detail = error instanceof Error ? error.message : String(error);
+        onError(
+          new Error(
+            `HTTP ingest failed to start; Feishu ingress continues: ${detail}`,
+          ),
+        );
+      }
+      try {
         await taskEventChannel?.start((signal) => {
           externalCollaborativeSync?.signalExternalId(signal.taskGuid, signal.occurredAt);
           runExternalSync(false);
         });
       } catch (error) {
+        await ingestHttp?.stop().catch(onError);
         await taskEventChannel?.stop().catch(onError);
         await supervisor.stop().catch(onError);
         throw error;
@@ -624,6 +697,10 @@ export async function createLiveService(
       return channel.waitForExit();
     },
 
+    httpIngestUrl() {
+      return ingestHttp?.url();
+    },
+
     async stop() {
       if (stopped) {
         return;
@@ -634,6 +711,7 @@ export async function createLiveService(
           clearInterval(repairTimer);
         }
         if (externalSyncTimer !== undefined) clearInterval(externalSyncTimer);
+        await ingestHttp?.stop();
         await supervisor.stop();
         await taskEventChannel?.stop();
         drainRepairs();

@@ -43,6 +43,7 @@ test("the raw Event remains durable when State projection fails", async () => {
       /state projection unavailable/,
     );
     assert.deepEqual(agent.getEvent("message-projection-failure"), {
+      source: "feishu",
       sourceMessageId: "message-projection-failure",
       userId: "user-1",
       rawText: "继续等张总反馈",

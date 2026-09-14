@@ -1,6 +1,8 @@
 # 飞书消息经 lark-cli 事件总线长连接接收，不部署 webhook
 
-PRD v0.1 假设飞书消息走 webhook，因此要求公网入站端点、签名与 challenge 校验。官方 lark-cli 提供 `event consume <EventKey>` 命令：本地事件总线 daemon 与飞书保持长连接，事件以 NDJSON 流到 stdout，并有明确的子进程契约（stderr ready marker、stdin EOF 即退出、SIGTERM 优雅退出、`message_id` 作为幂等键）。决定：Supervisor 以受管子进程运行 `lark-cli event consume im.message.receive_v1 --as bot`，回复经 `lark-cli im +messages-reply` 发送；不开放任何入站 HTTP 端口，不做签名校验。
+PRD v0.1 假设飞书消息走 webhook，因此要求公网入站端点、签名与 challenge 校验。官方 lark-cli 提供 `event consume <EventKey>` 命令：本地事件总线 daemon 与飞书保持长连接，事件以 NDJSON 流到 stdout，并有明确的子进程契约（stderr ready marker、stdin EOF 即退出、SIGTERM 优雅退出、`message_id` 作为幂等键）。决定：Supervisor 以受管子进程运行 `lark-cli event consume im.message.receive_v1 --as bot`，回复经 `lark-cli im +messages-reply` 发送；飞书入口不开放 webhook、不做签名校验。
+
+2026-09-14 修订：Grok Bot 的私有回环 `POST /v1/ingest` 是并列的第二条入口，见 [ADR-0010](./0010-private-http-ingest.md)。它不是飞书 webhook，也不替换本 ADR 的长连接 ingress。
 
 ## 考虑过的替代
 

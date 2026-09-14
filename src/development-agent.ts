@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   createEventStore,
+  type EventSource,
   type StoredEvent,
   type StoredRepair,
 } from "./event-store.js";
@@ -23,6 +24,14 @@ export interface ChannelEvent {
   readonly rawText: string;
   readonly rawPayload: Readonly<Record<string, unknown>>;
   readonly images?: readonly PromptImage[];
+  readonly source?: EventSource;
+}
+
+export function resolveEventSource(event: ChannelEvent): EventSource {
+  if (event.source === "grok" || event.source === "feishu") {
+    return event.source;
+  }
+  return event.rawPayload.channel === "grok" ? "grok" : "feishu";
 }
 
 export interface ItemStateChange {
@@ -117,7 +126,7 @@ export function createDevelopmentAgent(
       const now = new Date().toISOString();
       const receipt = events.receive({
         id: randomUUID(),
-        source: "feishu",
+        source: resolveEventSource(event),
         sourceMessageId: event.sourceMessageId,
         receivedAt: event.receivedAt,
         userId: event.userId,

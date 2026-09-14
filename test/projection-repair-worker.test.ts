@@ -61,6 +61,7 @@ test("a queued Bitable repair completes the degraded Event exactly once", async 
       },
     ]);
     assert.deepEqual(agent.getEvent("om_repair_worker"), {
+      source: "feishu",
       sourceMessageId: "om_repair_worker",
       userId: "user-1",
       rawText: "先放着",

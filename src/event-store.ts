@@ -8,9 +8,11 @@ import {
 } from "./memory.js";
 import { initializeStorage, readStorageHealth } from "./storage.js";
 
+export type EventSource = "feishu" | "grok";
+
 export interface NewEventRecord {
   readonly id: string;
-  readonly source: "feishu";
+  readonly source: EventSource;
   readonly sourceMessageId: string;
   readonly receivedAt: string;
   readonly userId: string;
@@ -21,6 +23,7 @@ export interface NewEventRecord {
 }
 
 export interface StoredEvent {
+  readonly source: EventSource;
   readonly sourceMessageId: string;
   readonly userId: string;
   readonly rawText: string;
@@ -78,6 +81,7 @@ export interface StoredRepair {
 }
 
 interface EventRow {
+  source: EventSource;
   source_message_id: string;
   user_id: string;
   raw_text: string;
@@ -94,8 +98,13 @@ interface RepairRow {
   last_error_json: string | null;
 }
 
+function toEventSource(value: string): EventSource {
+  return value === "grok" ? "grok" : "feishu";
+}
+
 function toStoredEvent(row: EventRow): StoredEvent {
   return {
+    source: toEventSource(row.source),
     sourceMessageId: row.source_message_id,
     userId: row.user_id,
     rawText: row.raw_text,
@@ -113,7 +122,7 @@ export function createEventStore(databasePath: string): EventStore {
   const get = (sourceMessageId: string): StoredEvent | undefined => {
     const row = database
       .prepare(
-        `SELECT source_message_id, user_id, raw_text,
+        `SELECT source, source_message_id, user_id, raw_text,
                 processing_status, assistant_reply
          FROM events
          WHERE source_message_id = ?`,
